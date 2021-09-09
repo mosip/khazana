@@ -10,9 +10,7 @@ on:
   
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v2
     - name: Set up JDK 11
@@ -22,8 +20,7 @@ jobs:
         java-version: 11
         server-id: ossrh # Value of the distributionManagement/repository/id field of the pom.xml
         settings-path: ${{ github.workspace }} # location for the settings.xml file
-
-    
+   
     - name: Setup branch and env 
       run: |
         # Strip git ref prefix from version
@@ -67,6 +64,14 @@ jobs:
       with:
         name: release
         path: ./release.zip
+    
+    - uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        fields: repo,message,commit,workflow,job # selectable (default: repo,message)
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEVOPS_WEBHOOK }} # required
+      if: failure() # Pick up events even if the job fails or is canceled.
 
 publish_to_nexus:
     runs-on: ubuntu-latest
@@ -133,7 +138,6 @@ publish_to_nexus:
 
   docker-kernel-auditmanager-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -197,7 +201,6 @@ publish_to_nexus:
 
   docker-kernel-ridgenerator-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -259,7 +262,7 @@ publish_to_nexus:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEVOPS_WEBHOOK }} # required
         if: failure() # Pick up events even if the job fails or is canceled.
 
-  docker-kernel-notification-service:
+docker-kernel-notification-service:
     needs: build
 
     runs-on: ubuntu-latest
@@ -325,7 +328,6 @@ publish_to_nexus:
 
   docker-kernel-auth-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -452,7 +454,6 @@ publish_to_nexus:
 
   docker-kernel-pridgenerator-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -516,7 +517,6 @@ publish_to_nexus:
 
   docker-kernel-otpmanager-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -580,7 +580,6 @@ publish_to_nexus:
 
   docker-kernel-idgenerator-service:
     needs: build
-
     runs-on: ubuntu-latest
     env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -644,7 +643,6 @@ publish_to_nexus:
 
   docker-kernel-salt-generator:
      needs: build
-
      runs-on: ubuntu-latest
      env:
       NAMESPACE: ${{ secrets. dev_namespace_docker_hub }}
@@ -823,8 +821,7 @@ publish_to_nexus:
 #        env:
 #          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEVOPS_WEBHOOK }} # required
 #        if: failure() # Pick up events even if the job fails or is canceled.
-    sonar_analysis:
-
+  sonar_analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
