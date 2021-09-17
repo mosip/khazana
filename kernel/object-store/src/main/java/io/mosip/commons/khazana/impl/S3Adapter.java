@@ -6,6 +6,8 @@ import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
 import static io.mosip.commons.khazana.constant.KhazanaConstant.TAGS_FILENAME;
 import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_NOT_ACCESSIBLE;
 
+import com.amazonaws.services.s3.model.AmazonS3Exception;
+import org.springframework.http.HttpStatus;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -125,7 +127,16 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
-        return getConnection(bucketName).doesObjectExist(bucketName,finalObjectName);
+        ObjectMetadata objectMetadata = null;
+    	try {
+            objectMetadata = getConnection(bucketName).getObjectMetadata(bucketName, finalObjectName);
+        } catch (AmazonS3Exception e) {
+    	    if (e.getStatusCode() == HttpStatus.NOT_FOUND.value())
+                LOGGER.error(SESSIONID, REGISTRATIONID, container,"Object not found in object store");
+            else
+                LOGGER.error(SESSIONID, REGISTRATIONID, container,ExceptionUtils.getStackTrace(e));
+        }
+        return objectMetadata != null;
     }
 
     @Override
