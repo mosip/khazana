@@ -55,15 +55,6 @@ jobs:
     
     - name: Build with Maven
       run: cd kernel && mvn -U -B package -DskipTests --file pom.xml -s $GITHUB_WORKSPACE/settings.xml
-
-    - name: Ready the springboot artifacts
-      run: find -name '*.jar' -executable -type f  -exec zip release.zip {} +
-
-    - name: Upload the springboot jars 
-      uses: actions/upload-artifact@v1
-      with:
-        name: release
-        path: ./release.zip
     
     - uses: 8398a7/action-slack@v3
       with:
@@ -132,6 +123,7 @@ jobs:
       env:
          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEVOPS_WEBHOOK }} # required
       if: failure() # Pick up events even if the job fails or is canceled.
+  
   sonar_analysis:
     runs-on: ubuntu-latest
     steps:
