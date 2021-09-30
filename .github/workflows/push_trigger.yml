@@ -120,7 +120,6 @@ jobs:
         
     - name: Publish the maven package
       run: |
-        #chmod +x ./deploy.sh
         cd kernel && mvn deploy -DskipTests -DaltDeploymentRepository=ossrh::default::${{ secrets.OSSRH_SNAPSHOT_URL }} -s $GITHUB_WORKSPACE/settings.xml -f pom.xml
       env:
         GITHUB_TOKEN: ${{secrets.RELEASE_TOKEN}}
