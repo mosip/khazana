@@ -6,3 +6,6 @@ By default MOSIP provides 3 object store adapter implementation -
 * S3 Adapter: Used for distributed object storage connection.
 * Posix Adapter: used for flat file object store connection.
 * Swift Adapter: used for distributed object storage connection.
+
+## License
+This project is licensed under the terms of [Mozilla Public License 2.0](LICENSE).
