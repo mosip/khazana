@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<version>1.2.0-rc2-SNAPSHOT</version>
-	<groupId>io.mosip.khazana</groupId>
+	<groupId>io.mosip.commons</groupId>
 	<artifactId>khazana-parent</artifactId>
 	<packaging>pom</packaging>
 	<name>khazana</name>
