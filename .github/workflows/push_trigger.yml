@@ -4,9 +4,11 @@ name: Maven Package upon a push
 on:
   push:
     branches:
+      - release*
       - master
       - 1.*
       - develop
+      - '!release-branch'
   
 jobs:
   build:
@@ -65,6 +67,7 @@ jobs:
       if: failure() # Pick up events even if the job fails or is canceled.
 
   publish_to_nexus:
+    if: "!contains(github.ref, 'master')"
     runs-on: ubuntu-latest
 
     steps:
