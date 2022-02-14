@@ -119,7 +119,7 @@ public class OnlineCryptoUtil {
 
     private RestTemplate getRestTemplate() {
         if (restTemplate == null)
-			restTemplate = (RestTemplate) applicationContext.getBean("restTemplate");
+			restTemplate = (RestTemplate) applicationContext.getBean("selfTokenRestTemplate");
         return restTemplate;
     }
 
