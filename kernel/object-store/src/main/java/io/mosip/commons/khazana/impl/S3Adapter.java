@@ -72,7 +72,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     private boolean useAccountAsBucketname;
 
     private int retry = 0;
-    
+
     private AmazonS3 connection = null;
     
     private static final String SEPARATOR = "/";
@@ -100,6 +100,7 @@ public class S3Adapter implements ObjectStoreAdapter {
                 return bis;
             }
         } catch (Exception e) {
+            connection = null;
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured to getObject for : " + container, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         } finally {
@@ -175,6 +176,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             getConnection(bucketName).putObject(putObjectRequest);
             return metadata;
         } catch (Exception e) {
+            connection = null;
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to addObjectMetaData for : " + container, ExceptionUtils.getStackTrace(e));
             metadata = null;
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -227,6 +229,7 @@ public class S3Adapter implements ObjectStoreAdapter {
                 objectMetadata.getUserMetadata().entrySet().forEach(entry -> metaData.put(entry.getKey(), entry.getValue()));
             return metaData;
         } catch (Exception e) {
+            connection = null;
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to getMetaData for : " + container, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         } finally {
@@ -305,16 +308,16 @@ public class S3Adapter implements ObjectStoreAdapter {
         return false;
     }
 
+    /**
+     * This method will return a singleton connection. It will verify connection for the first time and will reuse same connection in subsequent calls.
+     *
+     * @param bucketName
+     * @return
+     */
     private AmazonS3 getConnection(String bucketName) {
-        try {
-            if (connection != null) {
-                // test connection once before returning it
-                connection.doesBucketExistV2(bucketName);
-                return connection;
-            }
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured while using existing connection for " + bucketName +". Will try to create new. Retry count : " + retry, ExceptionUtils.getStackTrace(e));
-        }
+        if (connection != null)
+            return connection;
+
         try {
             AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
             connection = AmazonS3ClientBuilder.standard().withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
@@ -323,20 +326,23 @@ public class S3Adapter implements ObjectStoreAdapter {
                     .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region)).build();
             // test connection once before returning it
             connection.doesBucketExistV2(bucketName);
+            // reset retry after every successful connection so that in case of failure it starts from zero.
             retry = 0;
-            return connection;
-
         } catch (Exception e) {
             if (retry >= maxRetry) {
+                // reset the connection and retry count
+                retry = 0;
+                connection = null;
                 LOGGER.error(SESSIONID, REGISTRATIONID,"Maximum retry limit exceeded. Could not obtain connection for "+ bucketName +". Retry count :" + retry, ExceptionUtils.getStackTrace(e));
                 throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
             } else {
+                connection = null;
                 retry = retry + 1;
                 LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured while obtaining connection for "+ bucketName +". Will try again. Retry count : " + retry, ExceptionUtils.getStackTrace(e));
                 getConnection(bucketName);
             }
         }
-        return null;
+        return connection;
     }
 
     public List<ObjectDto> getAllObjects(String account, String id) {
@@ -421,6 +427,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 			
 
 		} catch (Exception e) {
+            connection = null;
 			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
 					ExceptionUtils.getStackTrace(e));
 			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
@@ -507,6 +514,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 			}
 
 		} catch (Exception e) {
+            connection = null;
 			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while deleteTags for : " + container,
 					ExceptionUtils.getStackTrace(e));
 			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
