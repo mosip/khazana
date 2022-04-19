@@ -16,10 +16,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import com.amazonaws.services.s3.model.AmazonS3Exception;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import com.amazonaws.ClientConfiguration;
@@ -127,7 +129,16 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
-        return getConnection(bucketName).doesObjectExist(bucketName,finalObjectName);
+        ObjectMetadata objectMetadata = null;
+    	try {
+            objectMetadata = getConnection(bucketName).getObjectMetadata(bucketName, finalObjectName);
+        } catch (AmazonS3Exception e) {
+    	    if (e.getStatusCode() == HttpStatus.NOT_FOUND.value())
+                LOGGER.error(SESSIONID, REGISTRATIONID, container,"Object not found in object store");
+            else
+                LOGGER.error(SESSIONID, REGISTRATIONID, container,ExceptionUtils.getStackTrace(e));
+        }
+        return objectMetadata != null;
     }
 
     @Override
