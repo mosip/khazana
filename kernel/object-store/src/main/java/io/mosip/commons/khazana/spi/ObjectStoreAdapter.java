@@ -10,6 +10,7 @@ public interface ObjectStoreAdapter {
 
     public InputStream getObject(String account, String container, String source, String process, String objectName);
     
+    // added this method to handle backward compatibility
 	public InputStream getObject(String account, String container, String source, String process, String objectName,
 			boolean useAccountAsBucketname);
 
@@ -29,7 +30,8 @@ public interface ObjectStoreAdapter {
 
     public boolean deleteObject(String account, String container, String source, String process, String objectName);
     
-	public boolean deleteObject(String account, String container, String source, String process, String objectName,
+    // added this method to handle backward compatibility
+    public boolean deleteObject(String account, String container, String source, String process, String objectName,
 			boolean useAccountAsBucketname);
 
     public boolean removeContainer(String account, String container, String source, String process);

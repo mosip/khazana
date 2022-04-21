@@ -490,6 +490,15 @@ public class S3Adapter implements ObjectStoreAdapter {
 		return true;
 	}
 	
+	/**
+	 * Gets the final object based on useAccountAsBucketname
+	 * @param container
+	 * @param source
+	 * @param process
+	 * @param objectName
+	 * @param useAccountAsBucketname
+	 * @return
+	 */
 	private String getFinalObjectName(String container, String source, String process, String objectName,
 			boolean useAccountAsBucketname) {
 		if (useAccountAsBucketname) {
@@ -498,6 +507,13 @@ public class S3Adapter implements ObjectStoreAdapter {
 		return ObjectStoreUtil.getName(source, process, objectName);
 	}
 	
+	/**
+	 * Gets the bucket name based on useAccountAsBucketname
+	 * @param account
+	 * @param container
+	 * @param useAccountAsBucketname
+	 * @return
+	 */
 	private String getBucketName(String account, String container, boolean useAccountAsBucketname) {
 		return useAccountAsBucketname ? account : container;
 	}
