@@ -81,42 +81,39 @@ public class S3Adapter implements ObjectStoreAdapter {
     
     private AmazonS3 connection = null;
 
-    @Override
-    public InputStream getObject(String account, String container, String source, String process, String objectName) {
-    	 String finalObjectName=null;
-    	 String bucketName=null;
-    	if(useAccountAsBucketname) {
-    		 finalObjectName = ObjectStoreUtil.getName(container,source, process, objectName);
-    		 bucketName=account;
-    	}else {
-    		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
-    		 bucketName=container;
-    	}
-    	
-        
-        S3Object s3Object = null;
-        try {
-            s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
-            if (s3Object != null) {
-                ByteArrayOutputStream temp = new ByteArrayOutputStream();
-                IOUtils.copy(s3Object.getObjectContent(), temp);
-                ByteArrayInputStream bis = new ByteArrayInputStream(temp.toByteArray());
-                return bis;
-            }
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured to getObject for : " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        } finally {
-            if (s3Object != null) {
-                try {
-                    s3Object.close();
-                } catch (IOException e) {
-                    LOGGER.error(SESSIONID, REGISTRATIONID, "IO occured : " + container, ExceptionUtils.getStackTrace(e));
-                }
-            }
-        }
-        return null;
-    }
+	@Override
+	public InputStream getObject(String account, String container, String source, String process, String objectName) {
+		return getObject(getFinalObjectName(container, source, process, objectName, useAccountAsBucketname),
+				getBucketName(account, container, useAccountAsBucketname), container);
+	}
+    
+	private InputStream getObject(String finalObjectName, String bucketName, String container) {
+		S3Object s3Object = null;
+		try {
+			s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
+			if (s3Object != null) {
+				ByteArrayOutputStream temp = new ByteArrayOutputStream();
+				IOUtils.copy(s3Object.getObjectContent(), temp);
+				ByteArrayInputStream bis = new ByteArrayInputStream(temp.toByteArray());
+				return bis;
+			}
+		} catch (Exception e) {
+			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured to getObject for : " + container,
+					ExceptionUtils.getStackTrace(e));
+			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+		} finally {
+			if (s3Object != null) {
+				try {
+					s3Object.close();
+				} catch (IOException e) {
+					LOGGER.error(SESSIONID, REGISTRATIONID, "IO occured : " + container,
+							ExceptionUtils.getStackTrace(e));
+				}
+			}
+		}
+		return null;
+	}
 
     @Override
     public boolean exists(String account, String container, String source, String process, String objectName) {
@@ -276,18 +273,10 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public boolean deleteObject(String account, String container, String source, String process, String objectName) {
-    	String finalObjectName=null;
-   	    String bucketName=null;
-   	   if(useAccountAsBucketname) {
-   		 finalObjectName = ObjectStoreUtil.getName(container,source, process, objectName);
-   		 bucketName=account;
-   	   }else {
-   		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
-   	  	 bucketName=container;
-   	   }
-     
-        getConnection(bucketName).deleteObject(bucketName, finalObjectName);
-        return true;
+		String bucketName = getBucketName(account, container, useAccountAsBucketname);
+		getConnection(bucketName).deleteObject(bucketName,
+				getFinalObjectName(container, source, process, objectName, useAccountAsBucketname));
+		return true;
     }
 
     /**
@@ -483,6 +472,34 @@ public class S3Adapter implements ObjectStoreAdapter {
 					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
 		}
 	
+	}
+
+	@Override
+	public InputStream getObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname) {
+		return getObject(getFinalObjectName(container, source, process, objectName, useAccountAsBucketname),
+				getBucketName(account, container, useAccountAsBucketname), container);
+	}
+
+	@Override
+	public boolean deleteObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname) {
+		String bucketName = getBucketName(account, container, useAccountAsBucketname);
+		getConnection(bucketName).deleteObject(bucketName,
+				getFinalObjectName(container, source, process, objectName, useAccountAsBucketname));
+		return true;
+	}
+	
+	private String getFinalObjectName(String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname) {
+		if (useAccountAsBucketname) {
+			return ObjectStoreUtil.getName(container, source, process, objectName);
+		}
+		return ObjectStoreUtil.getName(source, process, objectName);
+	}
+	
+	private String getBucketName(String account, String container, boolean useAccountAsBucketname) {
+		return useAccountAsBucketname ? account : container;
 	}
 
 }
