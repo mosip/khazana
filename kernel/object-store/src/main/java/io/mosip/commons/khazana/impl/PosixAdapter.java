@@ -363,4 +363,18 @@ public class PosixAdapter implements ObjectStoreAdapter {
     public List<ObjectDto> getAllObjects(String account, String container) {
         return null;
     }
+
+	@Override
+	public InputStream getObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public boolean deleteObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname) {
+		// TODO Auto-generated method stub
+		return false;
+	}
 }

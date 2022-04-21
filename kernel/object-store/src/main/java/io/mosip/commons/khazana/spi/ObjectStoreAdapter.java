@@ -9,6 +9,10 @@ import java.util.Map;
 public interface ObjectStoreAdapter {
 
     public InputStream getObject(String account, String container, String source, String process, String objectName);
+    
+    // added this method to handle backward compatibility
+	public InputStream getObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname);
 
     public boolean exists(String account, String container, String source, String process, String objectName);
 
@@ -25,6 +29,10 @@ public interface ObjectStoreAdapter {
     public Integer decMetadata(String account, String container, String source, String process, String objectName, String metaDataKey);
 
     public boolean deleteObject(String account, String container, String source, String process, String objectName);
+    
+    // added this method to handle backward compatibility
+    public boolean deleteObject(String account, String container, String source, String process, String objectName,
+			boolean useAccountAsBucketname);
 
     public boolean removeContainer(String account, String container, String source, String process);
 
