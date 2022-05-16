@@ -142,7 +142,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
-        AmazonS3 connection = getConnection(bucketName);
+        connection = getConnection(bucketName);
         if (!doesBucketExists(bucketName)) {
             connection.createBucket(bucketName);
             if (useAccountAsBucketname)
