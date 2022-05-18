@@ -439,7 +439,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 				bucketName = container;
 				finalObjectName = TAGS_FILENAME;
 			}
-			AmazonS3 connection = getConnection(bucketName);
+			connection = getConnection(bucketName);
 			if (!doesBucketExists(bucketName)) {
 				connection.createBucket(bucketName);
 				if (useAccountAsBucketname)
@@ -476,7 +476,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 				bucketName = container;
 				finalObjectName = TAGS_FILENAME + SEPARATOR;
 			}
-			AmazonS3 connection = getConnection(bucketName);
+			connection = getConnection(bucketName);
 
 			List<S3ObjectSummary> objectSummary = null;
 			if (useAccountAsBucketname)
@@ -530,7 +530,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 				bucketName = container;
 				finalObjectName = TAGS_FILENAME;
 			}
-			AmazonS3 connection = getConnection(container);
+			connection = getConnection(container);
 			if (!doesBucketExists(container)) {
 				connection.createBucket(container);
 				if (useAccountAsBucketname)
