@@ -77,6 +77,8 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
 
+    private static final String SEPARATOR = "/";
+
     private int retry = 0;
     
     private AmazonS3 connection = null;
@@ -343,11 +345,12 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     public List<ObjectDto> getAllObjects(String account, String id) {
 
+        String searchPattern = id + SEPARATOR;
         List<S3ObjectSummary> os = null;
    	   if(useAccountAsBucketname)
-           os = getConnection(account).listObjects(account, id).getObjectSummaries();
+           os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
    	   else
-           os = getConnection(id).listObjects(id).getObjectSummaries();
+           os = getConnection(id).listObjects(searchPattern).getObjectSummaries();
 
         if (os != null && os.size() > 0) {
             List<ObjectDto> objectDtos = new ArrayList<>();
