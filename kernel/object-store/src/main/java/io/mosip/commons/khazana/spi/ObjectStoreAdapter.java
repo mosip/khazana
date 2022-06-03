@@ -13,6 +13,8 @@ public interface ObjectStoreAdapter {
     public boolean exists(String account, String container, String source, String process, String objectName);
 
     public boolean putObject(String account, String container, String source, String process, String objectName, InputStream data);
+    
+    public boolean putObjectWithMetaData(String account, String container, String source, String process, String objectName, InputStream data,Map<String, Object> metadata);
 
     public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, Map<String, Object> metadata);
 
