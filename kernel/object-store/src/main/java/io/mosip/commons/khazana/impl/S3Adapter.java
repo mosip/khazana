@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import com.amazonaws.services.s3.model.*;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -30,10 +31,6 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.commons.khazana.dto.ObjectDto;
@@ -78,6 +75,8 @@ public class S3Adapter implements ObjectStoreAdapter {
     private AmazonS3 connection = null;
 
     private static final String SEPARATOR = "/";
+
+    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
@@ -409,10 +408,9 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 	@Override
 	public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
+        String bucketName=null;
+        String finalObjectName=null;
 		try {
-
-        	 String bucketName=null;
-        	 String finalObjectName=null;
         	if(useAccountAsBucketname) {
         		 bucketName=account;
         		 finalObjectName = ObjectStoreUtil.getName(container,null,TAGS_FILENAME);
@@ -435,11 +433,17 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 
 		} catch (Exception e) {
-            connection = null;
-			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
-					ExceptionUtils.getStackTrace(e));
-			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            // this check is introduced to support backward compatibility
+            if (e instanceof AmazonS3Exception && e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)) {
+                connection.deleteObject(bucketName, finalObjectName);
+                addTags(account, container, tags);
+            } else {
+                connection = null;
+                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+                        ExceptionUtils.getStackTrace(e));
+                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            }
 		}
 		return tags;
 	}
