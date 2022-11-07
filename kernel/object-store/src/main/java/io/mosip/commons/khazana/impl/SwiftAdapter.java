@@ -217,4 +217,10 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 		container.saveMetadata();
 
 	}
+
+	@Override
+	public boolean putObjectWithMetaData(String account, String container, String source, String process,
+			String objectName, InputStream data, Map<String, Object> metadata) {
+		throw new UnsupportedOperationException("temporary method is not supported");
+	}
 }
