@@ -75,7 +75,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     private int maxConnection;
     
     @Value("${object.store.s3.use.account.as.bucketname:false}")
-    private boolean useAccountAsBucketname;
+    protected boolean useAccountAsBucketname;
 
     private static final String SEPARATOR = "/";
 
@@ -309,7 +309,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         return false;
     }
 
-    private AmazonS3 getConnection(String bucketName) {
+    protected AmazonS3 getConnection(String bucketName) {
         try {
             if (connection != null) {
                 // test connection once before returning it

@@ -17,6 +17,7 @@ public class ObjectStoreUtil {
 
         return finalObjectName;
     }
+    
     public static String getName(String container,String source, String process, String objectName) {
         String finalObjectName = "";
         if (StringUtils.isNotEmpty(container))
@@ -30,4 +31,13 @@ public class ObjectStoreUtil {
 
         return finalObjectName;
     }
+
+    public static String getName(String objectName,String tagName) {
+ 	   String finalObjectName = "";
+ 	   if (StringUtils.isNotEmpty(objectName))
+            finalObjectName = objectName + SEPARATOR;
+ 	   if (StringUtils.isNotEmpty(tagName))
+            finalObjectName = finalObjectName + tagName;
+ 	   return finalObjectName;
+ }
 }
