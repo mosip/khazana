@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
+import io.mosip.commons.khazana.dto.ObjectDto;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.exception.ExceptionUtils;
@@ -127,6 +128,66 @@ public class S3AdapterV2 extends S3Adapter {
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
+    }
+
+    @Override
+    public List<ObjectDto> getAllObjects(String account, String id) {
+
+        String searchPattern = id + SEPARATOR;
+        List<S3ObjectSummary> os = null;
+        if (useAccountAsBucketname)
+            os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
+        else
+            os = getConnection(id).listObjects(searchPattern).getObjectSummaries();
+
+        if (os != null && os.size() > 0) {
+            List<ObjectDto> objectDtos = new ArrayList<>();
+            os.forEach(o -> {
+                // ignore the Tag file
+                String[] tempKeys = o.getKey().split("/");
+                if (useAccountAsBucketname) {
+                    if (tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
+                        tempKeys = null;
+                } else {
+                    if (tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
+                        tempKeys = null;
+                }
+
+                String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
+                if (ArrayUtils.isNotEmpty(keys)) {
+                    ObjectDto objectDto = null;
+                    switch (keys.length) {
+                        case 1:
+                            objectDto = new ObjectDto(null, null, keys[0], o.getLastModified());
+                            break;
+                        case 2:
+                            objectDto = new ObjectDto(keys[0], null, keys[1], o.getLastModified());
+                            break;
+                        case 3:
+                            objectDto = new ObjectDto(keys[0], keys[1], keys[2], o.getLastModified());
+                            break;
+                    }
+                    if (objectDto != null)
+                        objectDtos.add(objectDto);
+                }
+            });
+            return objectDtos;
+        }
+
+        return null;
+    }
+
+    /**
+     * If account is used as bucket name then first element of array is the packet
+     * id.
+     * This method removes packet id from array so that path is same irrespective of
+     * useAccountAsBucketname is true or false
+     *
+     * @param useAccountAsBucketname
+     * @param keys
+     */
+    private String[] removeIdFromObjectPath(boolean useAccountAsBucketname, String[] keys) {
+        return (useAccountAsBucketname && ArrayUtils.isNotEmpty(keys)) ? (String[]) ArrayUtils.remove(keys, 0) : keys;
     }
 
     private boolean doesBucketExists(AmazonS3 connection, String bucketName) {
