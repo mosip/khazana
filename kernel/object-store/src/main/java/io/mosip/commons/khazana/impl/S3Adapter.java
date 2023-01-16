@@ -70,6 +70,9 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
+    
+    @Value("${object.store.s3.use.prefix:null}")
+    private String prefix;
 
     private int retry = 0;
 
@@ -78,6 +81,8 @@ public class S3Adapter implements ObjectStoreAdapter {
     private AmazonS3 connection = null;
 
     private static final String SEPARATOR = "/";
+    
+    private static final String Hyphen = "-";
 
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
@@ -90,7 +95,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
-
+		if (prefix != null) {
+        	bucketName=prefix+Hyphen+bucketName;
+        }
 
         S3Object s3Object = null;
         try {
@@ -128,6 +135,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
+		if (prefix != null) {
+			bucketName = prefix + Hyphen + bucketName;
+		}
         return getConnection(bucketName).doesObjectExist(bucketName,finalObjectName);
     }
 
@@ -142,6 +152,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
+		if (prefix != null) {
+			bucketName = prefix + Hyphen + bucketName;
+		}
         AmazonS3 connection = getConnection(bucketName);
         if (!doesBucketExists(bucketName)) {
             connection.createBucket(bucketName);
@@ -168,6 +181,9 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
         		 bucketName=container;
         	}
+			if (prefix != null) {
+				bucketName = prefix + Hyphen + bucketName;
+			}
             ObjectMetadata objectMetadata = new ObjectMetadata();
             //changed usermetadata getting  overrided
             //metadata.entrySet().stream().forEach(m -> objectMetadata.addUserMetadata(m.getKey(), m.getValue() != null ? m.getValue().toString() : null));
@@ -226,6 +242,9 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
         		 bucketName=container;
         	}
+			if (prefix != null) {
+				bucketName = prefix + Hyphen + bucketName;
+			}
             Map<String, Object> metaData = new HashMap<>();
 
             s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
@@ -280,7 +299,9 @@ public class S3Adapter implements ObjectStoreAdapter {
    		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
    	  	 bucketName=container;
    	   }
-
+		if (prefix != null) {
+			bucketName = prefix + Hyphen + bucketName;
+		}
         getConnection(bucketName).deleteObject(bucketName, finalObjectName);
         return true;
     }
@@ -353,11 +374,22 @@ public class S3Adapter implements ObjectStoreAdapter {
     public List<ObjectDto> getAllObjects(String account, String id) {
 
         List<S3ObjectSummary> os = null;
-        String searchPattern=id+SEPARATOR;
-   	   if(useAccountAsBucketname)
-           os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
-   	   else
-           os = getConnection(id).listObjects(searchPattern).getObjectSummaries();
+
+   	   if(useAccountAsBucketname) {
+			String searchPattern = id + SEPARATOR;
+			if (prefix != null) {
+				account = prefix + Hyphen + account;
+			}
+			os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
+		}
+
+		else {
+			if (prefix != null) {
+				id = prefix + Hyphen + id;
+			}
+			String searchPatternId = id + SEPARATOR;
+			os = getConnection(id).listObjects(searchPatternId).getObjectSummaries();
+		}
 
         if (os != null && os.size() > 0) {
             List<ObjectDto> objectDtos = new ArrayList<>();
@@ -421,6 +453,9 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 bucketName=container;
         		 finalObjectName = TAGS_FILENAME;
         	}
+			if (prefix != null) {
+				bucketName = prefix + Hyphen + bucketName;
+			}
 			AmazonS3 connection = getConnection(bucketName);
             if (!doesBucketExists(bucketName)) {
                 connection.createBucket(bucketName);
@@ -459,6 +494,9 @@ public class S3Adapter implements ObjectStoreAdapter {
      		 bucketName=container;
 				finalObjectName = TAGS_FILENAME + SEPARATOR;
      	}
+			if (prefix != null) {
+				bucketName = prefix + Hyphen + bucketName;
+			}
 		AmazonS3 connection = getConnection(bucketName);
 
 			List<S3ObjectSummary> objectSummary = null;
@@ -513,6 +551,10 @@ public class S3Adapter implements ObjectStoreAdapter {
 	     		 bucketName=container;
 	     		 finalObjectName = TAGS_FILENAME;
 	     	}
+
+			if (prefix != null) {
+				bucketName = prefix + Hyphen + bucketName;
+			}
 			AmazonS3 connection = getConnection(container);
             if (!doesBucketExists(container)) {
                 connection.createBucket(container);
