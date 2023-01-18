@@ -371,8 +371,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 		else {
 			id = bucketNamePrefix + id;
-			String searchPatternId = id + SEPARATOR;
-			os = getConnection(id).listObjects(searchPatternId).getObjectSummaries();
+			os = getConnection(id).listObjects(id).getObjectSummaries();
 		}
 
         if (os != null && os.size() > 0) {
