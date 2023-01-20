@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import com.amazonaws.services.s3.model.*;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -31,6 +30,11 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.AmazonS3Exception;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.commons.khazana.dto.ObjectDto;
@@ -68,6 +72,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
 
+	@Value("${object.store.s3.bucket-name-prefix:}")
+	private String bucketNamePrefix;
+
     private int retry = 0;
 
     private List<String> existingBuckets = new ArrayList<>();
@@ -90,6 +97,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 bucketName=container;
     	}
 
+		bucketName = bucketNamePrefix + bucketName;
 
         S3Object s3Object = null;
         try {
@@ -127,6 +135,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
+		bucketName = bucketNamePrefix + bucketName;
         return getConnection(bucketName).doesObjectExist(bucketName,finalObjectName);
     }
 
@@ -141,6 +150,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
+		bucketName = bucketNamePrefix + bucketName;
         AmazonS3 connection = getConnection(bucketName);
         if (!doesBucketExists(bucketName)) {
             connection.createBucket(bucketName);
@@ -167,6 +177,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
         		 bucketName=container;
         	}
+			bucketName = bucketNamePrefix + bucketName;
             ObjectMetadata objectMetadata = new ObjectMetadata();
             //changed usermetadata getting  overrided
             //metadata.entrySet().stream().forEach(m -> objectMetadata.addUserMetadata(m.getKey(), m.getValue() != null ? m.getValue().toString() : null));
@@ -225,6 +236,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
         		 bucketName=container;
         	}
+			bucketName = bucketNamePrefix + bucketName;
             Map<String, Object> metaData = new HashMap<>();
 
             s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
@@ -279,7 +291,7 @@ public class S3Adapter implements ObjectStoreAdapter {
    		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
    	  	 bucketName=container;
    	   }
-
+		bucketName = bucketNamePrefix + bucketName;
         getConnection(bucketName).deleteObject(bucketName, finalObjectName);
         return true;
     }
@@ -352,10 +364,16 @@ public class S3Adapter implements ObjectStoreAdapter {
     public List<ObjectDto> getAllObjects(String account, String id) {
 
         List<S3ObjectSummary> os = null;
-   	   if(useAccountAsBucketname)
-           os = getConnection(account).listObjects(account, id).getObjectSummaries();
-   	   else
-           os = getConnection(id).listObjects(id).getObjectSummaries();
+   	   if(useAccountAsBucketname) {
+			String searchPattern = id + SEPARATOR;
+			account = bucketNamePrefix + account;
+			os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
+		}
+          
+		else {
+			id = bucketNamePrefix + id;
+			os = getConnection(id).listObjects(id).getObjectSummaries();
+		}
 
         if (os != null && os.size() > 0) {
             List<ObjectDto> objectDtos = new ArrayList<>();
@@ -418,6 +436,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         		 bucketName=container;
         		 finalObjectName = TAGS_FILENAME;
         	}
+			bucketName = bucketNamePrefix + bucketName;
 			AmazonS3 connection = getConnection(bucketName);
             if (!doesBucketExists(bucketName)) {
                 connection.createBucket(bucketName);
@@ -462,6 +481,7 @@ public class S3Adapter implements ObjectStoreAdapter {
      		 bucketName=container;
 				finalObjectName = TAGS_FILENAME + SEPARATOR;
      	}
+			bucketName = bucketNamePrefix + bucketName;
 		AmazonS3 connection = getConnection(bucketName);
 
 			List<S3ObjectSummary> objectSummary = null;
@@ -516,6 +536,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 	     		 bucketName=container;
 	     		 finalObjectName = TAGS_FILENAME;
 	     	}
+	     	bucketName = bucketNamePrefix + bucketName;
 			AmazonS3 connection = getConnection(container);
             if (!doesBucketExists(container)) {
                 connection.createBucket(container);
