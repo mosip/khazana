@@ -568,9 +568,13 @@ public class S3Adapter implements ObjectStoreAdapter {
     }
 
 	private String addBucketPrefix(String bucketName) {
-		if (bucketName.startsWith(bucketNamePrefix))
+		if (bucketName.startsWith(bucketNamePrefix)) {
+			LOGGER.debug("Already bucketName with prefix is present" + bucketName);
 			return bucketName;
-		else
-			return bucketNamePrefix + bucketName;
+		} else {
+			bucketName = bucketNamePrefix + bucketName;
+			LOGGER.debug("Adding  Prefix to bucketName" + bucketName);
+			return bucketName;
+		}
 	}
 }
