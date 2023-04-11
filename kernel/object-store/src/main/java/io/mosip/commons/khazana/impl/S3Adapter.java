@@ -236,7 +236,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
             ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
             if (objectMetadata != null && objectMetadata.getUserMetadata() != null)
-                objectMetadata.getUserMetadata().entrySet().forEach(entry -> metaData.put(entry.getKey(), entry.getValue()));
+                objectMetadata.getUserMetadata().entrySet().forEach(entry -> metaData.put(entry.getKey().toLowerCase(), entry.getValue()));
             return metaData;
         } catch (Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to getMetaData for : " + container, ExceptionUtils.getStackTrace(e));
