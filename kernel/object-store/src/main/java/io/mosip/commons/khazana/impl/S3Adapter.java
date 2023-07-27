@@ -30,6 +30,7 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.AmazonS3Exception;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.S3Object;
@@ -70,7 +71,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
-    
+
 	@Value("${object.store.s3.bucket-name-prefix:}")
 	private String bucketNamePrefix;
 
@@ -82,6 +83,9 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     private static final String SEPARATOR = "/";
 
+    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
+
+	private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
 
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
@@ -94,6 +98,7 @@ public class S3Adapter implements ObjectStoreAdapter {
     		 finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
     		 bucketName=container;
     	}
+
 		bucketName = addBucketPrefix(bucketName);
 		// As per AmazonS3 bucket naming rules,name contains only lower case letters
 		bucketName = bucketName.toLowerCase();
@@ -122,7 +127,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         return null;
     }
 
-	@Override
+    @Override
     public boolean exists(String account, String container, String source, String process, String objectName) {
     	 String finalObjectName=null;
     	 String bucketName=null;
@@ -372,7 +377,6 @@ public class S3Adapter implements ObjectStoreAdapter {
     public List<ObjectDto> getAllObjects(String account, String id) {
 
         List<S3ObjectSummary> os = null;
-
    	   if(useAccountAsBucketname) {
 			String searchPattern = id + SEPARATOR;
 			account = addBucketPrefix(account);
@@ -439,10 +443,9 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 	@Override
 	public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
+        String bucketName=null;
+        String finalObjectName=null;
 		try {
-
-        	 String bucketName=null;
-        	 String finalObjectName=null;
         	if(useAccountAsBucketname) {
         		 bucketName=account;
         		 finalObjectName = ObjectStoreUtil.getName(container,null,TAGS_FILENAME);
@@ -463,16 +466,40 @@ public class S3Adapter implements ObjectStoreAdapter {
 				String tagName=null;
 				InputStream data=IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
 				 tagName=ObjectStoreUtil.getName(finalObjectName, entry.getKey());
-		        connection.putObject(bucketName, tagName, data, null);
+					try {
+						connection.putObject(bucketName, tagName, data, null);
+					} catch (Exception e) {
+						// this check is introduced to support backward compatibility
+						if (e instanceof AmazonS3Exception && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
+								|| e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
+							if (connection.doesObjectExist(bucketName, finalObjectName)) {
+								connection.deleteObject(bucketName, finalObjectName);
+								addTags(account, container, tags);
+							} else {
+								connection = null;
+								LOGGER.error(SESSIONID, REGISTRATIONID,
+										"Exception occured while addTags for : " + container,
+										ExceptionUtils.getStackTrace(e));
+								throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+										OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+							}
+						  }else {
+							  connection = null;
+				                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+				                        ExceptionUtils.getStackTrace(e));
+				                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+				                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+						  }
+					}
 			}
 
 
 		} catch (Exception e) {
-            connection = null;
-			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
-					ExceptionUtils.getStackTrace(e));
-			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+                connection = null;
+                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+                        ExceptionUtils.getStackTrace(e));
+                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
 		}
 		return tags;
 	}
@@ -548,7 +575,6 @@ public class S3Adapter implements ObjectStoreAdapter {
 	     		 bucketName=container;
 	     		 finalObjectName = TAGS_FILENAME;
 	     	}
-
 			bucketName = addBucketPrefix(bucketName);
 			// As per AmazonS3 bucket naming rules,name contains only lower case letters
 			bucketName = bucketName.toLowerCase();
