@@ -85,6 +85,8 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
+	private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
+
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
     	 String finalObjectName=null;
@@ -464,22 +466,40 @@ public class S3Adapter implements ObjectStoreAdapter {
 				String tagName=null;
 				InputStream data=IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
 				 tagName=ObjectStoreUtil.getName(finalObjectName, entry.getKey());
-		        connection.putObject(bucketName, tagName, data, null);
+					try {
+						connection.putObject(bucketName, tagName, data, null);
+					} catch (Exception e) {
+						// this check is introduced to support backward compatibility
+						if (e instanceof AmazonS3Exception && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
+								|| e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
+							if (connection.doesObjectExist(bucketName, finalObjectName)) {
+								connection.deleteObject(bucketName, finalObjectName);
+								addTags(account, container, tags);
+							} else {
+								connection = null;
+								LOGGER.error(SESSIONID, REGISTRATIONID,
+										"Exception occured while addTags for : " + container,
+										ExceptionUtils.getStackTrace(e));
+								throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+										OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+							}
+						  }else {
+							  connection = null;
+				                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+				                        ExceptionUtils.getStackTrace(e));
+				                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+				                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+						  }
+					}
 			}
 
 
 		} catch (Exception e) {
-            // this check is introduced to support backward compatibility
-            if (e instanceof AmazonS3Exception && e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)) {
-                connection.deleteObject(bucketName, finalObjectName);
-                addTags(account, container, tags);
-            } else {
                 connection = null;
                 LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
                         ExceptionUtils.getStackTrace(e));
                 throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                         OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-            }
 		}
 		return tags;
 	}
