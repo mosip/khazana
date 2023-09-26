@@ -1,13 +1,17 @@
 name: 'Delete old artifacts'
 on:
   schedule:
-    - cron: '0 * * * *' # every hour
-
+    - cron: '0 * * * *' # Every hour
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'Message for manually triggering'
+        required: false
+        default: 'Triggered for Updates'
+        type: string
 jobs:
   delete-artifacts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: kolpav/purge-artifacts-action@v1
-        with:
-          token: ${{ secrets. access_token }}
-          expire-in: 2days # Setting this to 0 will delete all artifacts
+    uses: mosip/kattu/.github/workflows/clear-artifacts.yml@master
+    secrets:
+      ACCESS_TOKEN: ${{ secrets.access_token }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
