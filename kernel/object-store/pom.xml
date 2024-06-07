@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.mosip.commons</groupId>
     <artifactId>khazana</artifactId>
-    <version>1.2.1-java21-SNAPSHOT</version>
+    <version>1.2.1-SNAPSHOT</version>
 
     <properties>		
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -28,9 +28,9 @@
 		<nexus.staging.plugin.version>1.6.7</nexus.staging.plugin.version>
 		<git.commit.plugin.version>3.0.1</git.commit.plugin.version>
 		<s3mock.version>0.2.4</s3mock.version>
-        <kernel.core.version>1.2.1-java21-SNAPSHOT</kernel.core.version>
-        <kernel-keymanager-service.version>1.2.1-java21-SNAPSHOT</kernel-keymanager-service.version>
-        <kernel.bom.version>1.2.1-java21-SNAPSHOT</kernel.bom.version>
+        <kernel.core.version>1.2.1-SNAPSHOT</kernel.core.version>
+        <kernel-keymanager-service.version>1.2.1-SNAPSHOT</kernel-keymanager-service.version>
+        <kernel.bom.version>1.2.1-SNAPSHOT</kernel.bom.version>
 
         <aws.javasdk.version>1.11.368</aws.javasdk.version>
         <joss.adapter.version>0.10.2</joss.adapter.version>
