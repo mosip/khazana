@@ -32,7 +32,7 @@
         <kernel-keymanager-service.version>1.2.1-java21-SNAPSHOT</kernel-keymanager-service.version>
         <kernel.bom.version>1.2.1-java21-SNAPSHOT</kernel.bom.version>
 
-        <aws.javasdk.version>1.11.368</aws.javasdk.version>
+        <aws.javasdk.version>1.12.761</aws.javasdk.version>
         <joss.adapter.version>0.10.2</joss.adapter.version>
         <mockito.core.version>3.3.3</mockito.core.version>
 
