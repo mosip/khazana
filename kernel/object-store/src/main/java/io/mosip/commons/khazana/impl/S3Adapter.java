@@ -69,6 +69,15 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.max.connection:200}")
     private int maxConnection;
 
+    @Value("${object.store.max.connection:5000}")
+    private int connectionTimeOut;
+
+    @Value("${object.store.max.connection:10000}")
+    private int socketTimeOut;
+
+    @Value("${object.store.max.connection:15000}")
+    private int clientExecTimeOut;
+
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
 
@@ -350,9 +359,9 @@ public class S3Adapter implements ObjectStoreAdapter {
         try {
             AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
             ClientConfiguration clientConfig = new ClientConfiguration()
-                    .withConnectionTimeout(5000)    // Time to establish connection (ms)
-                    .withSocketTimeout(10000)       // Time to wait for data after connection (ms)
-                    .withClientExecutionTimeout(15000) // Total time before giving up (ms)
+                    .withConnectionTimeout(connectionTimeOut)    // Time to establish connection (ms)
+                    .withSocketTimeout(socketTimeOut)       // Time to wait for data after connection (ms)
+                    .withClientExecutionTimeout(clientExecTimeOut) // Total time before giving up (ms)
                     .withMaxConnections(maxConnection)
                     .withMaxErrorRetry(maxRetry);
 
