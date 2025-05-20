@@ -69,13 +69,13 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.max.connection:200}")
     private int maxConnection;
 
-    @Value("${object.store.max.connection:5000}")
+    @Value("${object.store.connection.timeout:5000}")
     private int connectionTimeOut;
 
-    @Value("${object.store.max.connection:10000}")
+    @Value("${object.store.socket.timeout:10000}")
     private int socketTimeOut;
 
-    @Value("${object.store.max.connection:15000}")
+    @Value("${object.store.client.execution.timeout:15000}")
     private int clientExecTimeOut;
 
     @Value("${object.store.s3.use.account.as.bucketname:false}")
