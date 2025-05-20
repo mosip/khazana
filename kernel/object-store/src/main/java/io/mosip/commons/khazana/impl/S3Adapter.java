@@ -349,9 +349,15 @@ public class S3Adapter implements ObjectStoreAdapter {
 
         try {
             AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
+            ClientConfiguration clientConfig = new ClientConfiguration()
+                    .withConnectionTimeout(5000)    // Time to establish connection (ms)
+                    .withSocketTimeout(10000)       // Time to wait for data after connection (ms)
+                    .withClientExecutionTimeout(15000) // Total time before giving up (ms)
+                    .withMaxConnections(maxConnection)
+                    .withMaxErrorRetry(maxRetry);
+
             connection = AmazonS3ClientBuilder.standard().withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
-                    .enablePathStyleAccess().withClientConfiguration(new ClientConfiguration().withMaxConnections(maxConnection)
-                            .withMaxErrorRetry(maxRetry))
+                    .enablePathStyleAccess().withClientConfiguration(clientConfig)
                     .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region)).build();
             // test connection once before returning it
             connection.doesBucketExistV2(bucketName);
