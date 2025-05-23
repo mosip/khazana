@@ -69,6 +69,15 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.max.connection:200}")
     private int maxConnection;
 
+    @Value("${object.store.connection.timeout:5000}")
+    private int connectionTimeOut;
+
+    @Value("${object.store.socket.timeout:10000}")
+    private int socketTimeOut;
+
+    @Value("${object.store.client.execution.timeout:15000}")
+    private int clientExecTimeOut;
+
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
 
@@ -349,9 +358,15 @@ public class S3Adapter implements ObjectStoreAdapter {
 
         try {
             AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
+            ClientConfiguration clientConfig = new ClientConfiguration()
+                    .withConnectionTimeout(connectionTimeOut)    // Time to establish connection (ms)
+                    .withSocketTimeout(socketTimeOut)       // Time to wait for data after connection (ms)
+                    .withClientExecutionTimeout(clientExecTimeOut) // Total time before giving up (ms)
+                    .withMaxConnections(maxConnection)
+                    .withMaxErrorRetry(maxRetry);
+
             connection = AmazonS3ClientBuilder.standard().withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
-                    .enablePathStyleAccess().withClientConfiguration(new ClientConfiguration().withMaxConnections(maxConnection)
-                            .withMaxErrorRetry(maxRetry))
+                    .enablePathStyleAccess().withClientConfiguration(clientConfig)
                     .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region)).build();
             // test connection once before returning it
             connection.doesBucketExistV2(bucketName);
