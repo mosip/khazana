@@ -45,7 +45,7 @@ public class PosixAdapterTest {
     private static final String objectName = "id";
     private static final String ZIP = ".zip";
     private static final String JSON = ".json";
-    private static final String SEPARATOR = "/";
+    private static final String SEPARATOR = File.separator;
 
     @InjectMocks
     private PosixAdapter posixAdapter = new PosixAdapter();
@@ -92,7 +92,6 @@ public class PosixAdapterTest {
         doNothing().when(zipOutputStream).putNextEntry(any());
         doNothing().when(zipOutputStream).write(any());
         when(objectMapper.writeValueAsString(any())).thenReturn("string");
-
     }
 
     @Test
@@ -104,14 +103,12 @@ public class PosixAdapterTest {
 
     @Test
     public void testExists() throws Exception {
-
         boolean result = posixAdapter.exists(account, container, source, process, objectName);
         assertTrue("Get object should not be present", result);
     }
 
     @Test
     public void testPutObject() throws Exception {
-
         boolean result = posixAdapter.putObject(account, container, source, process, objectName, fileInputStream);
         assertTrue("Put object should not be false", result);
     }
@@ -163,5 +160,4 @@ public class PosixAdapterTest {
         InputStream result = posixAdapter.getObject(account, container, source, process, objectName);
         assertNull("Put object should be null", result);
     }
-
 }
