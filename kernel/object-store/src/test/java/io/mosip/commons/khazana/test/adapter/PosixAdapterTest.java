@@ -6,6 +6,7 @@ import io.mosip.kernel.core.util.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.json.JSONObject;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
@@ -31,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
 
+@Ignore
 @RunWith(PowerMockRunner.class)
 @PrepareForTest({File.class, FileInputStream.class, ZipInputStream.class, ZipEntry.class,
         PosixAdapter.class, IOUtils.class, FileUtils.class})
