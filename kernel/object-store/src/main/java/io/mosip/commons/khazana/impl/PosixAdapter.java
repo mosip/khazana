@@ -1,7 +1,6 @@
 package io.mosip.commons.khazana.impl;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -9,7 +8,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -47,7 +45,7 @@ import io.mosip.kernel.core.util.FileUtils;
 public class PosixAdapter implements ObjectStoreAdapter {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(PosixAdapter.class);
-	private static final String SEPARATOR = File.separator;
+	private static final String SEPARATOR = "/";
 	private static final String ZIP = ".zip";
 	private static final String JSON = ".json";
 	private static final String TAGS = "_tags";

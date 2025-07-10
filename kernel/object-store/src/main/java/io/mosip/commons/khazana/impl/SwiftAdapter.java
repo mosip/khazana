@@ -50,8 +50,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 			return null;
 		}
 
-		Container container = getConnection(account).getContainer(containerName);
-
+		Container container = getOrCreateContainer(account, containerName);
 		if (!container.exists()) {
 			LOGGER.warn("Container '{}' does not exist for account '{}'. Cannot download object.", containerName,
 					account);
@@ -59,7 +58,6 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 		}
 
 		StoredObject storedObject = container.getObject(objectName);
-
 		if (!storedObject.exists()) {
 			LOGGER.warn("Object '{}' does not exist in container '{}'. Cannot download.", objectName, containerName);
 			return null;
@@ -96,15 +94,16 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 		}
 
 		try {
-			Account swiftAccount = getConnection(account);
-			Container container = swiftAccount.getContainer(containerName);
-
+			Container container = getOrCreateContainer(account, containerName);
 			if (!container.exists()) {
 				LOGGER.debug("Container '{}' does not exist. Creating it.", containerName);
-				container = container.create();
 			}
 
 			StoredObject storedObject = container.getObject(objectName);
+			if (!storedObject.exists()) {
+				LOGGER.warn("Object '{}' does not exist in container '{}'. Cannot download.", objectName, containerName);
+				return false;
+			}
 			storedObject.uploadObject(data);
 
 			LOGGER.debug("Successfully uploaded object '{}' to container '{}'", objectName, containerName);
@@ -134,7 +133,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 			return false;
 		}
 
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 		if (!container.exists()) {
 			LOGGER.info("Container '{}' does not exist in account '{}'", containerName, account);
 			return false;
@@ -163,7 +162,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 			return Collections.emptyMap();
 		}
 
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 		if (!container.exists()) {
 			LOGGER.warn("Container '{}' does not exist for account '{}'. Cannot add metadata.", containerName, account);
 			return Collections.emptyMap();
@@ -198,7 +197,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 	@Override
 	public Map<String, Object> addObjectMetaData(String account, String containerName, String source, String process,
 			String objectName, String key, String value) {
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 
 		if (!container.exists()) {
 			LOGGER.warn("Container '{}' does not exist for account '{}'. Cannot add metadata.", containerName, account);
@@ -240,7 +239,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 	public Map<String, Object> getMetaData(String account, String containerName, String source, String process,
 			String objectName) {
 		Map<String, Object> metaData = new HashMap<>();
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 
 		if (!container.exists()) {
 			LOGGER.warn("Container '{}' does not exist in account '{}'", containerName, account);
@@ -274,34 +273,25 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 	 * metaData.put(storedObject.getName(), storedObject.getMetadata()); } return
 	 * metaData; }
 	 */
-	private Account getConnection(String accountName) {
-		// Check and return cached connection if available
-		if (accounts.containsKey(accountName)) {
-			return accounts.get(accountName);
-		}
+	private synchronized Account getConnection(String accountName) {
+        return accounts.computeIfAbsent(accountName, name -> {
+            AccountConfig config = new AccountConfig();
+            config.setUsername(userName);
+            config.setPassword(password);
+            config.setAuthUrl(authUrl);
+            config.setTenantName(name);
+            config.setAuthenticationMethod(AuthenticationMethod.BASIC);
+            Account account = new AccountFactory(config).setAllowReauthenticate(true).createAccount();
+            LOGGER.debug("Created new Swift account connection for tenant '{}'", name);
+            return account;
+        });
+    }
+	
+	private Container getOrCreateContainer(String account, String containerName) {
+        Container container = getConnection(account).getContainer(containerName);
+        return container.exists() ? container : container.create();
+    }
 
-		synchronized (this) {
-			// Double-check locking to prevent race condition
-			if (accounts.containsKey(accountName)) {
-				return accounts.get(accountName);
-			}
-
-			AccountConfig config = new AccountConfig();
-			config.setUsername(userName);
-			config.setPassword(password);
-			config.setAuthUrl(authUrl);
-			config.setTenantName(accountName);
-			config.setAuthenticationMethod(AuthenticationMethod.BASIC);
-
-			Account account = new AccountFactory(config).setAllowReauthenticate(true).createAccount();
-
-			accounts.put(accountName, account);
-
-			LOGGER.debug("Created new Swift account connection for tenant '{}'", accountName);
-
-			return account;
-		}
-	}
 	/*
 	 * private Account getConnection(String accountName) { if (!accounts.isEmpty()
 	 * && accounts.get(accountName) != null) return accounts.get(accountName);
@@ -365,8 +355,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 
 	@Override
 	public Map<String, String> addTags(String account, String containerName, Map<String, String> tags) {
-		Account swiftAccount = getConnection(account);
-		Container container = swiftAccount.getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 
 		if (!container.exists()) {
 			LOGGER.info("Container '{}' does not exist. Creating new container.", containerName);
@@ -407,7 +396,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 	@Override
 	public Map<String, String> getTags(String account, String containerName) {
 		Map<String, String> metaData = new HashMap<>();
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 
 		// Avoid creating container
 		if (!container.exists()) {
@@ -451,7 +440,7 @@ public class SwiftAdapter implements ObjectStoreAdapter {
 
 	@Override
 	public void deleteTags(String account, String containerName, List<String> tags) {
-		Container container = getConnection(account).getContainer(containerName);
+		Container container = getOrCreateContainer(account, containerName);
 
 		// Avoid creating container on delete
 		if (!container.exists()) {
