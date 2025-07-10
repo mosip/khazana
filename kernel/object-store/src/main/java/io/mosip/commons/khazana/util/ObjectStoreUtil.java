@@ -28,7 +28,7 @@ public class ObjectStoreUtil {
     /**
      * System-specific file separator, used to construct object paths.
      */
-    private static final String SEPARATOR = File.separator;
+    private static final String SEPARATOR = "/";
 
     /**
      * Constructs a storage object name using source, process, and object name.

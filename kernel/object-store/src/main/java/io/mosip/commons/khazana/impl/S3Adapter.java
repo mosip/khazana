@@ -7,7 +7,6 @@ import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_N
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +34,7 @@ import com.amazonaws.services.s3.model.AmazonS3Exception;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.S3ObjectInputStream;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
@@ -82,7 +82,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 	private AmazonS3 connection = null;
 
-	private static final String SEPARATOR = File.separator;
+	private static final String SEPARATOR = "/";
 
 	private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
@@ -97,26 +97,44 @@ public class S3Adapter implements ObjectStoreAdapter {
 	    String bucketName = useAccountAsBucketname ? account : container;
 	    bucketName = addBucketPrefix(bucketName).toLowerCase();
 
+	    S3Object s3Object = null;
+
 	    try {
 	        AmazonS3 connection = getConnection(bucketName);
-	        S3Object s3Object = connection.getObject(bucketName, objectKey);
+	        s3Object = connection.getObject(bucketName, objectKey);
+
 	        if (s3Object == null || s3Object.getObjectContent() == null) {
 	            LOGGER.warn(SESSIONID, REGISTRATIONID, "Object not found: {}/{}", bucketName, objectKey);
 	            return null;
 	        }
 
-	        // Directly return the stream (caller is responsible for closing)
-	        return s3Object.getObjectContent();
+	     // Copy fully and close underlying stream explicitly
+	        S3ObjectInputStream s3is = s3Object.getObjectContent();
+	        ByteArrayOutputStream temp = new ByteArrayOutputStream();
+	        IOUtils.copy(s3is, temp);
+	        s3is.close(); // ✅ Ensure full closure of stream
 
+	        return new ByteArrayInputStream(temp.toByteArray());
 	    } catch (Exception e) {
 	        this.connection = null;
-	        LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occurred while fetching object: {}/{}",
-	                bucketName, objectKey, ExceptionUtils.getStackTrace(e));
+	        LOGGER.error(SESSIONID, REGISTRATIONID,
+	                "Exception occurred while fetching object: {}/{}", bucketName, objectKey, ExceptionUtils.getStackTrace(e));
 	        throw new ObjectStoreAdapterException(
 	                OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
 	                OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+	    } finally {
+	        if (s3Object != null) {
+	            try {
+	                s3Object.close(); // This also closes the underlying input stream
+	            } catch (IOException e) {
+	                LOGGER.error(SESSIONID, REGISTRATIONID,
+	                        "IO exception while closing S3 object: " + bucketName,
+	                        ExceptionUtils.getStackTrace(e));
+	            }
+	        }
 	    }
 	}
+
 
 	/*@Override
 	public InputStream getObject(String account, String container, String source, String process, String objectName) {
