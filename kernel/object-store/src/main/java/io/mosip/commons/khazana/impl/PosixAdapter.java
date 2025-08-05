@@ -315,19 +315,21 @@ public class PosixAdapter implements ObjectStoreAdapter {
 		if (tagFile.createNewFile()) {
 			LOGGER.info(" tags file not yet present for  id - " + container);
 		} else {
-			InputStream inputstream = new FileInputStream(tagFile);
-			BufferedReader inputStreamReader = new BufferedReader(new InputStreamReader(inputstream, "UTF-8"));
-			StringBuilder responseStrBuilder = new StringBuilder();
+			try (InputStream inputstream = new FileInputStream(tagFile);
+                BufferedReader inputStreamReader = new BufferedReader(new InputStreamReader(inputstream, "UTF-8"))) {
+                StringBuilder responseStrBuilder = new StringBuilder();
 
-			String inputTags;
-			while ((inputTags = inputStreamReader.readLine()) != null)
-			    responseStrBuilder.append(inputTags);
+                String inputTags;
+                while ((inputTags = inputStreamReader.readLine()) != null)
+                    responseStrBuilder.append(inputTags);
 
-			inputStreamReader.close();
-			JSONObject jsonObject = objectMapper.readValue(objectMapper.writeValueAsString(responseStrBuilder.toString()),
-					JSONObject.class);
-			metaMap = objectMapper.readValue(jsonObject.toString(), HashMap.class);
-			}
+                inputStreamReader.close();
+                JSONObject jsonObject = objectMapper.readValue(objectMapper.writeValueAsString(responseStrBuilder.toString()),
+                        JSONObject.class);
+                metaMap = objectMapper.readValue(jsonObject.toString(), HashMap.class);
+
+                }
+           }
 		} catch (Exception e) {
 			LOGGER.error("exception occured to get tags for id - " + container, e);
 		}
@@ -354,10 +356,9 @@ public class PosixAdapter implements ObjectStoreAdapter {
 		if (!accountLocation.exists())
 			accountLocation.mkdir();
 		File tagFile = new File(accountLocation.getPath() + SEPARATOR + container + TAGS + JSON);
-		OutputStream outStream = new FileOutputStream(tagFile);
-		outStream.write(IOUtils.toByteArray(data));
-		outStream.close();
-
+		try (OutputStream outStream = new FileOutputStream(tagFile)) {
+            outStream.write(IOUtils.toByteArray(data));
+        }
 	}
 
     public List<ObjectDto> getAllObjects(String account, String container) {
