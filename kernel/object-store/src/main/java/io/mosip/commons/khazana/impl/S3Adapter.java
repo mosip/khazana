@@ -12,8 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.*;
 
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -89,10 +88,10 @@ public class S3Adapter implements ObjectStoreAdapter {
                             .credentialsProvider(StaticCredentialsProvider.create(
                                     AwsBasicCredentials.create(accessKey, secretKey)))
                             .httpClientBuilder(ApacheHttpClient.builder()
-                                    .maxConnections(maxConnection)
+                                    .maxConnections(Math.max(maxConnection, 500)) // boost pool
                                     .connectionTimeout(Duration.ofMillis(connectionTimeout))
-                                    .socketTimeout(Duration.ofMillis(socketTimeout)))
-                            // Rely on SDK default retry policy (adaptive/backoff) instead of manual Thread.sleep
+                                    .socketTimeout(Duration.ofMillis(socketTimeout))
+                                    .tcpKeepAlive(true)) // keep TCP connections alive
                             .build();
                 }
             }
@@ -172,30 +171,190 @@ public class S3Adapter implements ObjectStoreAdapter {
     }
 
     @Override
-    public boolean putObject(String account, String container, String source, String process, String objectName, InputStream data) {
+    public boolean putObject(String account, String container, String source, String process,
+                             String objectName, InputStream data) {
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectKey(account, container, source, process, objectName);
+
+        final int partSize = 5 * 1024 * 1024; // 5MB minimum for S3
+        final int parallelism = Math.min(Runtime.getRuntime().availableProcessors(), 8); // cap at 8 threads
+
+        ExecutorService executor = Executors.newFixedThreadPool(parallelism);
+        List<Future<CompletedPart>> futures = new ArrayList<>();
+        S3Client client = getS3Client();
+
+        try {
+            ensureBucket(bucketName);
+
+            // 1. Initiate multipart upload
+            CreateMultipartUploadResponse createResp = client.createMultipartUpload(
+                    CreateMultipartUploadRequest.builder()
+                            .bucket(bucketName)
+                            .key(finalObjectName)
+                            .build());
+            String uploadId = createResp.uploadId();
+
+            try {
+                byte[] buffer = new byte[partSize];
+                int bytesRead;
+                int partNumber = 1;
+
+                while ((bytesRead = readFully(data, buffer)) > 0) {
+                    final int currentPart = partNumber;
+                    final byte[] partBytes = Arrays.copyOf(buffer, bytesRead);
+
+                    // Submit upload task in parallel
+                    futures.add(executor.submit(() -> {
+                        UploadPartResponse uploadPartResponse = client.uploadPart(
+                                UploadPartRequest.builder()
+                                        .bucket(bucketName)
+                                        .key(finalObjectName)
+                                        .uploadId(uploadId)
+                                        .partNumber(currentPart)
+                                        .contentLength((long) partBytes.length)
+                                        .build(),
+                                RequestBody.fromBytes(partBytes)
+                        );
+                        return CompletedPart.builder()
+                                .partNumber(currentPart)
+                                .eTag(uploadPartResponse.eTag())
+                                .build();
+                    }));
+
+                    partNumber++;
+                }
+
+                // Wait for all uploads to finish
+                List<CompletedPart> completedParts = new ArrayList<>();
+                for (Future<CompletedPart> f : futures) {
+                    completedParts.add(f.get());
+                }
+
+                // Sort parts (S3 requires ascending part numbers)
+                completedParts.sort(Comparator.comparingInt(CompletedPart::partNumber));
+
+                // 3. Complete upload
+                client.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
+                        .bucket(bucketName)
+                        .key(finalObjectName)
+                        .uploadId(uploadId)
+                        .multipartUpload(CompletedMultipartUpload.builder()
+                                .parts(completedParts)
+                                .build())
+                        .build());
+
+            } catch (Exception ex) {
+                // Abort upload if anything fails
+                client.abortMultipartUpload(AbortMultipartUploadRequest.builder()
+                        .bucket(bucketName)
+                        .key(finalObjectName)
+                        .uploadId(uploadId)
+                        .build());
+                throw ex;
+            }
+
+            return true;
+
+        } catch (Exception e) {
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception during putObject for: " + container, ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    /*   @Override
+    public boolean putObject(String account, String container, String source, String process,
+                             String objectName, InputStream data) {
         String bucketName = resolveBucketName(account, container);
         String finalObjectName = resolveObjectKey(account, container, source, process, objectName);
 
         try {
             ensureBucket(bucketName);
 
-            // Avoid loading whole content on heap: buffer to a temp file and upload from file.
-            Path tmp = bufferToTempFile(data);
+            final int partSize = 5 * 1024 * 1024; // 5MB min for S3 multipart
+            S3Client client = getS3Client();
+
+            // 1. Initiate multipart upload
+            CreateMultipartUploadResponse createResp = client.createMultipartUpload(
+                    CreateMultipartUploadRequest.builder()
+                            .bucket(bucketName)
+                            .key(finalObjectName)
+                            .build());
+            String uploadId = createResp.uploadId();
+            List<CompletedPart> completedParts = new ArrayList<>();
+
             try {
-                getS3Client().putObject(
-                        PutObjectRequest.builder().bucket(bucketName).key(finalObjectName).build(),
-                        RequestBody.fromFile(tmp)
-                );
-                return true;
-            } finally {
-                safeDelete(tmp);
+                byte[] buffer = new byte[partSize];
+                int bytesRead;
+                int partNumber = 1;
+
+                while ((bytesRead = readFully(data, buffer)) > 0) {
+                    byte[] partBytes = (bytesRead == buffer.length) ? buffer : Arrays.copyOf(buffer, bytesRead);
+
+                    UploadPartResponse uploadPartResponse = client.uploadPart(
+                            UploadPartRequest.builder()
+                                    .bucket(bucketName)
+                                    .key(finalObjectName)
+                                    .uploadId(uploadId)
+                                    .partNumber(partNumber)
+                                    .contentLength((long) bytesRead)
+                                    .build(),
+                            RequestBody.fromBytes(partBytes)
+                    );
+
+                    completedParts.add(CompletedPart.builder()
+                            .partNumber(partNumber)
+                            .eTag(uploadPartResponse.eTag())
+                            .build());
+
+                    partNumber++;
+                }
+
+                // 3. Complete multipart upload
+                client.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
+                        .bucket(bucketName)
+                        .key(finalObjectName)
+                        .uploadId(uploadId)
+                        .multipartUpload(CompletedMultipartUpload.builder()
+                                .parts(completedParts)
+                                .build())
+                        .build());
+
+            } catch (Exception ex) {
+                // Abort upload on any error
+                client.abortMultipartUpload(AbortMultipartUploadRequest.builder()
+                        .bucket(bucketName)
+                        .key(finalObjectName)
+                        .uploadId(uploadId)
+                        .build());
+                throw ex;
             }
+
+            return true;
+
         } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception during putObject for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception during putObject for: " + container, ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
+    }*/
+
+    private int readFully(InputStream in, byte[] buffer) throws IOException {
+        int totalRead = 0;
+        while (totalRead < buffer.length) {
+            int bytesRead = in.read(buffer, totalRead, buffer.length - totalRead);
+            if (bytesRead == -1) break;
+            totalRead += bytesRead;
+        }
+        return totalRead;
     }
+
 
     @Override
     public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, Map<String, Object> metadata) {
