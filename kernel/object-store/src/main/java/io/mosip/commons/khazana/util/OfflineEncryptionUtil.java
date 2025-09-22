@@ -60,11 +60,11 @@ public class OfflineEncryptionUtil {
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
         sRandom.nextBytes(nonce);
         sRandom.nextBytes(aad);
-        cryptomanagerRequestDto.setAad(CryptoUtil.encodeToURLSafeBase64(aad));
-        cryptomanagerRequestDto.setSalt(CryptoUtil.encodeToURLSafeBase64(nonce));
+        cryptomanagerRequestDto.setAad(CryptoUtil.encodeToPlainBase64(aad));
+        cryptomanagerRequestDto.setSalt(CryptoUtil.encodeToPlainBase64(nonce));
         cryptomanagerRequestDto.setTimeStamp(DateUtils.getUTCCurrentDateTime());
 
-        byte[] encryptedData = CryptoUtil.decodeURLSafeBase64(getCryptomanagerService().encrypt(cryptomanagerRequestDto).getData());
+        byte[] encryptedData = CryptoUtil.decodePlainBase64(getCryptomanagerService().encrypt(cryptomanagerRequestDto).getData());
         return EncryptionUtil.mergeEncryptedData(encryptedData, nonce, aad);
     }
 
