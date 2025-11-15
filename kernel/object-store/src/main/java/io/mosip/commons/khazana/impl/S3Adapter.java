@@ -5,7 +5,7 @@ import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
 import static io.mosip.commons.khazana.constant.KhazanaConstant.TAGS_FILENAME;
 import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_NOT_ACCESSIBLE;
 
-import java.io.*;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,6 +33,10 @@ import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.exception.ExceptionUtils;
 import io.mosip.kernel.core.logger.spi.Logger;
 
+/**
+ * Highly optimized S3Adapter for Java 21/Spring Boot 3.x using AWS SDK v1.
+ * Streams data directly, uses efficient connection management, eliminates unnecessary buffering.
+ */
 @Service
 public class S3Adapter implements ObjectStoreAdapter {
 
@@ -68,19 +72,18 @@ public class S3Adapter implements ObjectStoreAdapter {
     private String bucketNamePrefix;
 
     private AmazonS3 s3Client;
-
     private final Set<String> existingBuckets = ConcurrentHashMap.newKeySet();
 
     @PostConstruct
     public void init() {
-        var awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
-        var clientConfig = new ClientConfiguration()
+        AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
+        ClientConfiguration clientConfig = new ClientConfiguration()
                 .withConnectionTimeout(connectionTimeout)
                 .withSocketTimeout(socketTimeout)
                 .withClientExecutionTimeout(clientExecutionTimeout)
                 .withMaxConnections(maxConnection)
                 .withMaxErrorRetry(maxRetry)
-                .withConnectionMaxIdleMillis(60_000); // Clean up idle connections
+                .withConnectionMaxIdleMillis(60_000);
 
         s3Client = AmazonS3ClientBuilder.standard()
                 .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
@@ -96,20 +99,32 @@ public class S3Adapter implements ObjectStoreAdapter {
                 : bucketName;
     }
 
+    private String resolveBucketName(String account, String container) {
+        return addBucketPrefix(useAccountAsBucketname ? account : container).toLowerCase();
+    }
+
+    private String resolveObjectName(String account, String container, String source, String process, String objectName) {
+        return useAccountAsBucketname
+                ? ObjectStoreUtil.getName(container, source, process, objectName)
+                : ObjectStoreUtil.getName(source, process, objectName);
+    }
+
     private boolean doesBucketExist(String bucketName) {
         if (existingBuckets.contains(bucketName)) return true;
-        var exists = s3Client.doesBucketExistV2(bucketName);
+        boolean exists = s3Client.doesBucketExistV2(bucketName);
         if (exists) existingBuckets.add(bucketName);
         return exists;
     }
 
+    /** ========== Optimized Implementation ========== */
+
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         try {
-            var s3Object = s3Client.getObject(bucketName, finalObjectName);
-            return s3Object.getObjectContent();
+            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
+            return s3Object.getObjectContent(); // Direct streaming to caller, caller must close!
         } catch (Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception getObject for: " + container, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
@@ -119,19 +134,19 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public boolean exists(String account, String container, String source, String process, String objectName) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         return s3Client.doesObjectExist(bucketName, finalObjectName);
     }
 
     @Override
     public boolean putObject(String account, String container, String source, String process, String objectName, InputStream data) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         int attempts = 0;
         while (attempts < 2) {
             try {
-                var metadata = new ObjectMetadata();
+                ObjectMetadata metadata = new ObjectMetadata();
                 s3Client.putObject(bucketName, finalObjectName, data, metadata);
                 existingBuckets.add(bucketName);
                 return true;
@@ -158,19 +173,17 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, Map<String, Object> metadata) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         try {
-            var s3Object = s3Client.getObject(bucketName, finalObjectName);
-            var objectMetadata = new ObjectMetadata();
+            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
+            ObjectMetadata objectMetadata = new ObjectMetadata();
             if (s3Object.getObjectMetadata() != null && s3Object.getObjectMetadata().getUserMetadata() != null) {
                 objectMetadata.setUserMetadata(new HashMap<>(s3Object.getObjectMetadata().getUserMetadata()));
             }
             metadata.forEach((k, v) -> objectMetadata.addUserMetadata(k, v != null ? v.toString() : null));
-            try (var content = s3Object.getObjectContent()) {
-                var req = new PutObjectRequest(bucketName, finalObjectName, content, objectMetadata);
-                req.getRequestClientOptions().setReadLimit(readlimit);
-                s3Client.putObject(req);
+            try (InputStream content = s3Object.getObjectContent()) {
+                s3Client.putObject(bucketName, finalObjectName, content, objectMetadata);
             }
             return metadata;
         } catch (Exception e) {
@@ -189,12 +202,12 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public Map<String, Object> getMetaData(String account, String container, String source, String process, String objectName) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         Map<String, Object> metaData = new HashMap<>();
         try {
-            var s3Object = s3Client.getObject(bucketName, finalObjectName);
-            var objectMetadata = s3Object.getObjectMetadata();
+            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
+            ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
             if (objectMetadata != null && objectMetadata.getUserMetadata() != null) {
                 metaData.putAll(objectMetadata.getUserMetadata());
             }
@@ -208,7 +221,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public Integer incMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
-        var metadata = getMetaData(account, container, source, process, objectName);
+        Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
         if (metadata.get(metaDataKey) != null) {
             metadata.put(metaDataKey, Integer.valueOf(metadata.get(metaDataKey).toString()) + 1);
             addObjectMetaData(account, container, source, process, objectName, metadata);
@@ -219,7 +232,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public Integer decMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
-        var metadata = getMetaData(account, container, source, process, objectName);
+        Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
         if (metadata.get(metaDataKey) != null) {
             metadata.put(metaDataKey, Integer.valueOf(metadata.get(metaDataKey).toString()) - 1);
             addObjectMetaData(account, container, source, process, objectName, metadata);
@@ -230,8 +243,8 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public boolean deleteObject(String account, String container, String source, String process, String objectName) {
-        var bucketName = resolveBucketName(account, container);
-        var finalObjectName = resolveObjectName(account, container, source, process, objectName);
+        String bucketName = resolveBucketName(account, container);
+        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         try {
             s3Client.deleteObject(bucketName, finalObjectName);
             return true;
@@ -247,13 +260,16 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Override
     public boolean pack(String account, String container, String source, String process, String refId) { return false; }
 
+    // getAllObjects: list objects, then download metadata only (not bytes unless consumer calls getObject)
     public List<ObjectDto> getAllObjects(String account, String id) {
-        var objectSummaries = new ArrayList<S3ObjectSummary>();
-        var bucketName = useAccountAsBucketname ? addBucketPrefix(account).toLowerCase() : addBucketPrefix(id).toLowerCase();
-        var prefix = useAccountAsBucketname ? id + SEPARATOR : "";
+        List<S3ObjectSummary> objectSummaries = new ArrayList<>();
+        String bucketName = useAccountAsBucketname ? addBucketPrefix(account).toLowerCase() : addBucketPrefix(id).toLowerCase();
+        String prefix = useAccountAsBucketname ? id + SEPARATOR : "";
 
         try {
-            var req = new ListObjectsV2Request().withBucketName(bucketName).withPrefix(prefix);
+            ListObjectsV2Request req = new ListObjectsV2Request()
+                    .withBucketName(bucketName)
+                    .withPrefix(prefix);
             ListObjectsV2Result result;
             do {
                 result = s3Client.listObjectsV2(req);
@@ -266,27 +282,34 @@ public class S3Adapter implements ObjectStoreAdapter {
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
         if (!objectSummaries.isEmpty()) {
-            var objectDtos = new ArrayList<ObjectDto>();
-            objectSummaries.forEach(o -> {
-                var tempKeys = o.getKey().split("/");
+            List<ObjectDto> objectDtos = new ArrayList<>();
+            for (S3ObjectSummary o : objectSummaries) {
+                String[] tempKeys = o.getKey().split("/");
                 if (useAccountAsBucketname) {
                     if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
-                        return;
+                        continue;
                 } else {
                     if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
-                        return;
+                        continue;
                 }
-                var keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
+                String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
                 if (ArrayUtils.isNotEmpty(keys)) {
                     ObjectDto objectDto = null;
                     switch (keys.length) {
-                        case 1 -> objectDto = new ObjectDto(null, null, keys[0], o.getLastModified());
-                        case 2 -> objectDto = new ObjectDto(keys[0], null, keys[1], o.getLastModified());
-                        case 3 -> objectDto = new ObjectDto(keys[0], keys[1], keys[2], o.getLastModified());
+                        case 1:
+                            objectDto = new ObjectDto(null, null, keys[0], o.getLastModified());
+                            break;
+                        case 2:
+                            objectDto = new ObjectDto(keys[0], null, keys[1], o.getLastModified());
+                            break;
+                        case 3:
+                            objectDto = new ObjectDto(keys[0], keys[1], keys[2], o.getLastModified());
+                            break;
                     }
-                    if (objectDto != null) objectDtos.add(objectDto);
+                    if (objectDto != null)
+                        objectDtos.add(objectDto);
                 }
-            });
+            }
             return objectDtos;
         }
         return null;
@@ -313,9 +336,9 @@ public class S3Adapter implements ObjectStoreAdapter {
             int attempts = 0;
             while (attempts < 2) {
                 try {
-                    for (var entry : tags.entrySet()) {
-                        var tagName = ObjectStoreUtil.getName(finalObjectName, entry.getKey());
-                        var data = IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
+                    for (Map.Entry<String, String> entry : tags.entrySet()) {
+                        String tagName = ObjectStoreUtil.getName(finalObjectName, entry.getKey());
+                        InputStream data = IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
                         s3Client.putObject(bucketName, tagName, data, null);
                     }
                     existingBuckets.add(bucketName);
@@ -354,7 +377,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     @Override
     public Map<String, String> getTags(String account, String container) {
-        var objectTags = new HashMap<String, String>();
+        Map<String, String> objectTags = new HashMap<>();
         try {
             String bucketName, finalObjectName;
             if (useAccountAsBucketname) {
@@ -366,8 +389,10 @@ public class S3Adapter implements ObjectStoreAdapter {
             }
             bucketName = addBucketPrefix(bucketName).toLowerCase();
 
-            var objectSummary = new ArrayList<S3ObjectSummary>();
-            var req = new ListObjectsV2Request().withBucketName(bucketName).withPrefix(finalObjectName);
+            List<S3ObjectSummary> objectSummary = new ArrayList<>();
+            ListObjectsV2Request req = new ListObjectsV2Request()
+                    .withBucketName(bucketName)
+                    .withPrefix(finalObjectName);
             ListObjectsV2Result result;
             do {
                 result = s3Client.listObjectsV2(req);
@@ -375,9 +400,9 @@ public class S3Adapter implements ObjectStoreAdapter {
                 req.setContinuationToken(result.getNextContinuationToken());
             } while (result.isTruncated());
 
-            var tagNames = new ArrayList<String>();
-            objectSummary.forEach(o -> {
-                var keys = o.getKey().split("/");
+            List<String> tagNames = new ArrayList<>();
+            for (S3ObjectSummary o : objectSummary) {
+                String[] keys = o.getKey().split("/");
                 if (ArrayUtils.isNotEmpty(keys)) {
                     if (useAccountAsBucketname) {
                         if (keys.length > 1 && keys[1] != null && keys[1].endsWith(TAGS_FILENAME) && keys.length > 2)
@@ -387,8 +412,8 @@ public class S3Adapter implements ObjectStoreAdapter {
                             tagNames.add(keys[1]);
                     }
                 }
-            });
-            for (var tagName : tagNames) {
+            }
+            for (String tagName : tagNames) {
                 objectTags.put(tagName, s3Client.getObjectAsString(bucketName, finalObjectName + tagName));
             }
             return objectTags;
@@ -415,8 +440,8 @@ public class S3Adapter implements ObjectStoreAdapter {
             int attempts = 0;
             while (attempts < 2) {
                 try {
-                    for (var tag : tags) {
-                        var tagName = ObjectStoreUtil.getName(finalObjectName, tag);
+                    for (String tag : tags) {
+                        String tagName = ObjectStoreUtil.getName(finalObjectName, tag);
                         s3Client.deleteObject(bucketName, tagName);
                     }
                     return;
@@ -442,15 +467,5 @@ public class S3Adapter implements ObjectStoreAdapter {
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
-    }
-
-    // ===== New Java 21-style helpers =====
-    private String resolveBucketName(String account, String container) {
-        return addBucketPrefix(useAccountAsBucketname ? account : container).toLowerCase();
-    }
-    private String resolveObjectName(String account, String container, String source, String process, String objectName) {
-        return useAccountAsBucketname
-                ? ObjectStoreUtil.getName(container, source, process, objectName)
-                : ObjectStoreUtil.getName(source, process, objectName);
     }
 }
