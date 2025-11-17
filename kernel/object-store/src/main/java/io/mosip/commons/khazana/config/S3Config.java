@@ -20,7 +20,6 @@ public class S3Config {
             // Load from application properties (not hardcoded)
             return new AWSStaticCredentialsProvider(new BasicAWSCredentials(accessKey, secretKey));
         }
-
         // Fallback to the default AWS credentials provider chain
         return DefaultAWSCredentialsProviderChain.getInstance();
     }
