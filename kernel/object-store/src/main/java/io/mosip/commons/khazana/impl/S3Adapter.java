@@ -17,8 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import com.amazonaws.auth.AWSCredentialsProvider;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -50,10 +52,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     private final Logger LOGGER = LoggerConfiguration.logConfig(S3Adapter.class);
 
-    @Value("${object.store.s3.accesskey:accesskey:accesskey}")
-    private String accessKey;
-    @Value("${object.store.s3.secretkey:secretkey:secretkey}")
-    private String secretKey;
+
     @Value("${object.store.s3.url:null}")
     private String url;
 
@@ -95,6 +94,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
 	private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
+
+    @Autowired
+    private AWSCredentialsProvider awsCredentialsProvider;
 
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
@@ -357,17 +359,21 @@ public class S3Adapter implements ObjectStoreAdapter {
             return connection;
 
         try {
-            AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
             ClientConfiguration clientConfig = new ClientConfiguration()
                     .withConnectionTimeout(connectionTimeout)    // Time to establish connection (ms)
-                    .withSocketTimeout(socketTimeout)       // Time to wait for data after connection (ms)
+                    .withSocketTimeout(socketTimeout)            // Time to wait for data after connection (ms)
                     .withClientExecutionTimeout(clientExecutionTimeout) // Total time before giving up (ms)
                     .withMaxConnections(maxConnection)
                     .withMaxErrorRetry(maxRetry);
 
-            connection = AmazonS3ClientBuilder.standard().withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
-                    .enablePathStyleAccess().withClientConfiguration(clientConfig)
-                    .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region)).build();
+            // Build the S3 connection using the default AWS credential chain
+            connection = AmazonS3ClientBuilder.standard()
+                    .withCredentials(awsCredentialsProvider)
+                    .enablePathStyleAccess()
+                    .withClientConfiguration(clientConfig)
+                    .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region))
+                    .build();
+
             // test connection once before returning it
             connection.doesBucketExistV2(bucketName);
             // reset retry after every successful connection so that in case of failure it starts from zero.
