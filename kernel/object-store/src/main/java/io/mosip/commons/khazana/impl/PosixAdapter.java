@@ -323,7 +323,6 @@ public class PosixAdapter implements ObjectStoreAdapter {
                 while ((inputTags = inputStreamReader.readLine()) != null)
                     responseStrBuilder.append(inputTags);
 
-                inputStreamReader.close();
                 JSONObject jsonObject = objectMapper.readValue(objectMapper.writeValueAsString(responseStrBuilder.toString()),
                         JSONObject.class);
                 metaMap = objectMapper.readValue(jsonObject.toString(), HashMap.class);
