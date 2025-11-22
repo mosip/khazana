@@ -29,7 +29,7 @@
 		<git.commit.plugin.version>3.0.1</git.commit.plugin.version>
 		<s3mock.version>0.2.4</s3mock.version>
         <kernel.core.version>1.3.0-SNAPSHOT</kernel.core.version>
-        <kernel-keymanager-service.version>1.3.0-beta.1</kernel-keymanager-service.version>
+        <kernel-keymanager-service.version>1.3.0-SNAPSHOT</kernel-keymanager-service.version>
         <kernel.bom.version>1.3.0-SNAPSHOT</kernel.bom.version>
 
         <aws.javasdk.version>1.11.368</aws.javasdk.version>
