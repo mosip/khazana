@@ -133,9 +133,6 @@ public class S3Adapter implements ObjectStoreAdapter {
 
                 s3Client = builder.build();
 
-                // connection test – listBuckets is enough to test connectivity
-                s3Client.listBuckets();
-
                 retry = 0;
             } catch (Exception e) {
                 if (retry >= maxRetry) {
