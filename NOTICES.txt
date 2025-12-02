@@ -1,0 +1,106 @@
+MOSIP
+Copyright (c) 2022
+Modular Open Source Identity Platform
+
+This project includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+Third-party attributions:
+
+This product bundles open-source components distributed under their respective
+licenses. Attribution and license details for each component are listed below.
+
+
+-------------------------------------------------------------------------------
+Apache License 2.0 Components
+-------------------------------------------------------------------------------
+
+This product contains components licensed under the Apache License 2.0:
+
+• Maven JAR Plugin  
+  https://maven.apache.org/plugins/maven-jar-plugin/
+
+• Maven Javadoc Plugin  
+  https://maven.apache.org/plugins/maven-javadoc-plugin/
+
+• Maven Surefire Plugin  
+  https://maven.apache.org/surefire/maven-surefire-plugin/
+
+• Maven Compiler Plugin  
+  https://maven.apache.org/plugins/maven-compiler-plugin/
+
+• Maven Source Plugin  
+  https://maven.apache.org/plugins/maven-source-plugin/
+
+• Maven GPG Plugin  
+  https://maven.apache.org/plugins/maven-gpg-plugin/
+
+• Maven WAR Plugin  
+  https://maven.apache.org/plugins/maven-war-plugin/
+
+• Git Commit ID Maven Plugin  
+  https://github.com/git-commit-id/git-commit-id-maven-plugin
+
+• Spring Boot Maven Plugin  
+  https://spring.io/projects/spring-boot
+
+• Central Publishing Maven Plugin  
+  https://central.sonatype.org/publish/
+
+• JOSS – Java OpenStack Storage  
+  https://github.com/javaswift/joss
+
+• AWS Java SDK  
+  https://aws.amazon.com/sdk-for-java/
+
+-------------------------------------------------------------------------------
+MIT License Components
+-------------------------------------------------------------------------------
+
+• Lombok  
+  https://projectlombok.org/
+
+• Mockito Core  
+  https://site.mockito.org/
+
+• S3Mock (Findify)  
+  https://github.com/findify/s3mock
+
+-------------------------------------------------------------------------------
+Eclipse Public License Components
+-------------------------------------------------------------------------------
+
+• JUnit Vintage Engine (EPL-2.0)  
+  https://junit.org/junit5/
+
+-------------------------------------------------------------------------------
+Mozilla Public License 2.0 Components (MPL-2.0)
+-------------------------------------------------------------------------------
+
+This product includes MOSIP components licensed under MPL-2.0:
+
+• MOSIP Kernel Core  
+  https://github.com/mosip/mosip-kernel
+
+• MOSIP Kernel BOM  
+  https://github.com/mosip/mosip-kernel
+
+• MOSIP Kernel Keymanager Service  
+  https://github.com/mosip/mosip-kernel
+
+-------------------------------------------------------------------------------
+Apache License 2.0 Components (PowerMock)
+-------------------------------------------------------------------------------
+
+• PowerMock API Mockito2  
+  https://github.com/powermock/powermock
+
+• PowerMock Module JUnit4  
+  https://github.com/powermock/powermock
+
+-------------------------------------------------------------------------------
+
+Full license texts for all components listed above are available in the
+`license/` directory of this repository. For full legal terms and conditions,
+refer to the original component sources.
+
