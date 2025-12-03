@@ -54,7 +54,7 @@ Homepage: https://maven.apache.org/plugins/maven-war-plugin/
 ================================================================================
 Package: Git Commit ID Plugin
 Version: 3.0.1
-License: Apache License 2.0 (Inferred from project’s official repository)
+License: LGPL-3.0 (GNU Lesser General Public License v3.0)
 Homepage: https://github.com/git-commit-id/git-commit-id-maven-plugin
 ================================================================================
 
