@@ -343,7 +343,9 @@ public class PosixAdapterTest {
         assertTrue(read.containsKey("t1"), "new tag should be present");
 
         // cleanup
-        Files.walk(tmp.toPath()).map(p -> p.toFile()).forEach(f -> f.delete());
+        Files.walk(tmp.toPath())
+                            .sorted((a, b) -> b.compareTo(a))
+                            .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
     }
 
     @Test
@@ -368,7 +370,9 @@ public class PosixAdapterTest {
         assertNull(adapter.getAllObjects("a", "b"));
 
         // cleanup
-        Files.walk(tmp.toPath()).map(p -> p.toFile()).forEach(f -> f.delete());
+        Files.walk(tmp.toPath())
+                            .sorted((a, b) -> b.compareTo(a))
+                            .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
     }
 
     @Test
