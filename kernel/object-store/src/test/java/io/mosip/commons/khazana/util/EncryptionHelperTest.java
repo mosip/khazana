@@ -40,7 +40,7 @@ public class EncryptionHelperTest {
     }
 
     @Test
-    void encrypt_shouldUseOffline_whenCryptoNameIsOffline() {
+    void encryptShouldUseOfflineWhenCryptoNameIsOffline() {
         byte[] input = "hello".getBytes();
         byte[] expected = "offline".getBytes();
         when(offlineEncryptionUtil.encrypt("ref", input)).thenReturn(expected);
@@ -51,7 +51,7 @@ public class EncryptionHelperTest {
     }
 
     @Test
-    void encrypt_shouldUseOnline_whenCryptoNameIsNotOffline() throws Exception {
+    void encryptShouldUseOnlineWhenCryptoNameIsNotOffline() throws Exception {
         // set cryptoName to some other value
         Field crypto = EncryptionHelper.class.getDeclaredField("cryptoName");
         crypto.setAccessible(true);
@@ -66,4 +66,3 @@ public class EncryptionHelperTest {
         assertArrayEquals(expected, actual);
     }
 }
-

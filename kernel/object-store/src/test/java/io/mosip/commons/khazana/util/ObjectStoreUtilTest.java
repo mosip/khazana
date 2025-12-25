@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 public class ObjectStoreUtilTest {
 
     @Test
-    void getName_sourceProcessObject_shouldComposeCorrectly() {
+    void getNameSourceProcessObjectShouldComposeCorrectly() {
         // Arrange
         String source = "src";
         String process = "proc";
@@ -22,7 +22,7 @@ public class ObjectStoreUtilTest {
     }
 
     @Test
-    void getName_containerSourceProcessObject_shouldComposeCorrectly() {
+    void getName_containerSourceProcessObjectShouldComposeCorrectly() {
         // Arrange
         String container = "cont";
         String source = "src";
@@ -37,7 +37,7 @@ public class ObjectStoreUtilTest {
     }
 
     @Test
-    void getName_objectTag_shouldComposeCorrectly_andHandleEmpty() {
+    void getName_objectTagShouldComposeCorrectlyAndHandleEmpty() {
         // Arrange
         String objectName = "obj";
         String tagName = "tag";

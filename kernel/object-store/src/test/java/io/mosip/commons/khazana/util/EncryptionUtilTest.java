@@ -14,7 +14,7 @@ import io.mosip.commons.khazana.constant.KhazanaConstant;
 class EncryptionUtilTest {
 
     @Test
-    void mergeEncryptedData_shouldConcatenate_nonce_aad_and_encryptedData_in_order() {
+    void mergeEncryptedDataShouldConcatenateNonceAadAndEncryptedDataInOrder() {
         byte[] encrypted = "enc-payload".getBytes(StandardCharsets.UTF_8);
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH];
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
@@ -46,7 +46,7 @@ class EncryptionUtilTest {
     }
 
     @Test
-    void mergeEncryptedData_withEmptyEncryptedData_shouldStillReturn_nonce_and_aad() {
+    void mergeEncryptedDataWithEmptyEncryptedDataShouldStillReturnNonceAndAad() {
         byte[] encrypted = new byte[0];
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH];
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
@@ -63,28 +63,28 @@ class EncryptionUtilTest {
     }
 
     @Test
-    void mergeEncryptedData_shouldThrow_NPE_when_encryptedData_is_null() {
+    void mergeEncryptedDataShouldThrowNPEWhenEncryptedDataIsNull() {
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH];
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
         assertThrows(NullPointerException.class, () -> EncryptionUtil.mergeEncryptedData(null, nonce, aad));
     }
 
     @Test
-    void mergeEncryptedData_shouldThrow_NPE_when_nonce_is_null() {
+    void mergeEncryptedDataShouldThrowNpeWhenNonceIsNull() {
         byte[] encrypted = "x".getBytes(StandardCharsets.UTF_8);
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
         assertThrows(NullPointerException.class, () -> EncryptionUtil.mergeEncryptedData(encrypted, null, aad));
     }
 
     @Test
-    void mergeEncryptedData_shouldThrow_NPE_when_aad_is_null() {
+    void mergeEncryptedDataShouldThrowNpeWhenAadIsNull() {
         byte[] encrypted = "x".getBytes(StandardCharsets.UTF_8);
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH];
         assertThrows(NullPointerException.class, () -> EncryptionUtil.mergeEncryptedData(encrypted, nonce, null));
     }
 
     @Test
-    void mergeEncryptedData_shouldThrow_when_nonce_length_exceeds_constant() {
+    void mergeEncryptedDataShouldThrowWhenNonceLengthExceedsConstant() {
         byte[] encrypted = "enc".getBytes(StandardCharsets.UTF_8);
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH + 1];
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH];
@@ -93,7 +93,7 @@ class EncryptionUtilTest {
     }
 
     @Test
-    void mergeEncryptedData_shouldThrow_when_aad_length_exceeds_constant() {
+    void mergeEncryptedDataShouldThrowWhenAadLengthExceedsConstant() {
         byte[] encrypted = "enc".getBytes(StandardCharsets.UTF_8);
         byte[] nonce = new byte[KhazanaConstant.GCM_NONCE_LENGTH];
         byte[] aad = new byte[KhazanaConstant.GCM_AAD_LENGTH + 1];

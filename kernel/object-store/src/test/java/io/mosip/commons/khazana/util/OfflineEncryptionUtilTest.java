@@ -41,7 +41,7 @@ class OfflineEncryptionUtilTest {
     }
 
     @Test
-    void encrypt_shouldReturn_merged_bytes_with_expected_tail() throws Exception {
+    void encryptShouldReturnMergedBytesWithExpectedTail() throws Exception {
         byte[] plain = "payload-data".getBytes(StandardCharsets.UTF_8);
         byte[] encryptedData = "cipher-bytes".getBytes(StandardCharsets.UTF_8);
         String base64 = Base64.getEncoder().encodeToString(encryptedData);
@@ -67,7 +67,7 @@ class OfflineEncryptionUtilTest {
     }
 
     @Test
-    void encrypt_shouldPropagate_when_service_throws() throws Exception {
+    void encryptShouldPropagateWhenServiceThrows() throws Exception {
         byte[] plain = "payload".getBytes(StandardCharsets.UTF_8);
         when(applicationContext.getBean(CryptomanagerServiceImpl.class)).thenReturn(cryptomanagerService);
         when(cryptomanagerService.encrypt(any())).thenThrow(new RuntimeException("boom"));

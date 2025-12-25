@@ -69,7 +69,7 @@ class OnlineCryptoUtilTest {
     }
 
     @Test
-    void encrypt_shouldReturn_merged_bytes_on_success() throws Exception {
+    void encryptShouldReturnMergedBytesOnSuccess() throws Exception {
         byte[] plain = "payload-data".getBytes(StandardCharsets.UTF_8);
         byte[] encryptedData = "cipher-bytes".getBytes(StandardCharsets.UTF_8);
         String base64 = Base64.getEncoder().encodeToString(encryptedData);
@@ -89,7 +89,7 @@ class OnlineCryptoUtilTest {
     }
 
     @Test
-    void encrypt_shouldThrow_ObjectStoreAdapterException_when_service_returns_error() throws Exception {
+    void encryptShouldThrowObjectStoreAdapterExceptionWhenServiceReturnsError() throws Exception {
         byte[] plain = "payload-data".getBytes(StandardCharsets.UTF_8);
 
         // build minimal JSON with errors array: { errors: [ { errorCode: "ERR", message: "failed" } ] }
@@ -101,7 +101,7 @@ class OnlineCryptoUtilTest {
     }
 
     @Test
-    void decrypt_shouldReturn_decoded_bytes_on_success() throws Exception {
+    void decryptShouldReturnDecodedBytesOnSuccess() throws Exception {
         // build nonce + aad + encryptedData
         byte[] nonce = new byte[io.mosip.commons.khazana.constant.KhazanaConstant.GCM_NONCE_LENGTH];
         byte[] aad = new byte[io.mosip.commons.khazana.constant.KhazanaConstant.GCM_AAD_LENGTH];
@@ -128,7 +128,7 @@ class OnlineCryptoUtilTest {
     }
 
     @Test
-    void getRestTemplate_shouldFetch_from_applicationContext_when_null() throws Exception {
+    void getRestTemplateShouldFetchFromApplicationContextWhenNull() throws Exception {
         // prepare a fresh util with null restTemplate
         OnlineCryptoUtil newUtil = new OnlineCryptoUtil();
         Field ac = OnlineCryptoUtil.class.getDeclaredField("applicationContext");
