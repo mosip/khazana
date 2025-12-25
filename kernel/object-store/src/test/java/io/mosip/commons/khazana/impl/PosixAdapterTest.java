@@ -19,6 +19,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +62,18 @@ public class PosixAdapterTest {
         h.set(adapter, helper);
     }
 
+    @AfterEach
+    void tearDown() throws Exception {
+        if (tempDir != null && Files.exists(tempDir)) {
+            Files.walk(tempDir)
+                    .sorted((a, b) -> b.compareTo(a))
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {}
+                    });
+        }
+    }
     @Test
     void putAndGetObjectShouldStoreAndRetrieveContent() throws IOException {
         String account = "acct";
