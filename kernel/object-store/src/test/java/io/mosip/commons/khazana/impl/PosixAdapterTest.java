@@ -190,7 +190,7 @@ public class PosixAdapterTest {
         String account = "noacc";
         String container = "nocon";
         String objectName = "o";
-        assertNull(adapter.getMetaData(account, container, "s", "p", objectName);, "getMetaData should return null when container is missing");
+        assertNull(adapter.getMetaData(account, container, "s", "p", objectName), "getMetaData should return null when container is missing");
     }
 
     @Test
