@@ -24,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.mosip.commons.khazana.util.EncryptionHelper;
-import scala.xml.MetaData;
 
 @ExtendWith(MockitoExtension.class)
 public class PosixAdapterTest {
@@ -191,10 +190,7 @@ public class PosixAdapterTest {
         String account = "noacc";
         String container = "nocon";
         String objectName = "o";
-
-        MetaData metaData = (MetaData) adapter.getMetaData(account, container, "s", "p", objectName);
-
-        assertNull(metaData, "getMetaData should return null when container is missing");
+        assertNull(adapter.getMetaData(account, container, "s", "p", objectName);, "getMetaData should return null when container is missing");
     }
 
     @Test
