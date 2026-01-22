@@ -198,42 +198,50 @@ public class S3Adapter implements ObjectStoreAdapter {
         String b = bucket(account, container);
         String k = key(container, source, process, objectName);
 
+        S3Object s3Object = null;
         try {
-            ObjectMetadata old = s3.getObjectMetadata(b, k);
+            s3Object = s3.getObject(b, k);
 
-            Map<String, String> merged = new HashMap<>();
+            ObjectMetadata old = s3Object.getObjectMetadata();
+            ObjectMetadata updated = new ObjectMetadata();
+
+            // ✅ Preserve ALL existing user metadata
             if (old.getUserMetadata() != null) {
-                merged.putAll(old.getUserMetadata());
+                old.getUserMetadata().forEach(updated::addUserMetadata);
             }
-            meta.forEach((x, y) -> merged.put(x, Objects.toString(y, null)));
 
-            ObjectMetadata n = new ObjectMetadata();
-            n.setUserMetadata(merged);
+            // ✅ Merge new metadata
+            meta.forEach((x, y) ->
+                    updated.addUserMetadata(x, Objects.toString(y, null)));
 
-            // ✅ Preserve system metadata (SAFE SET)
-            n.setContentType(old.getContentType());
-            n.setContentEncoding(old.getContentEncoding());
-            n.setCacheControl(old.getCacheControl());
-            n.setContentDisposition(old.getContentDisposition());
-            n.setContentLanguage(old.getContentLanguage());
-            // ❌ DO NOT set contentLength
+            // ✅ Preserve system metadata
+            updated.setContentType(old.getContentType());
+            updated.setContentEncoding(old.getContentEncoding());
+            updated.setCacheControl(old.getCacheControl());
+            updated.setContentDisposition(old.getContentDisposition());
+            updated.setContentLanguage(old.getContentLanguage());
+            updated.setContentLength(old.getContentLength());
 
-            s3.copyObject(
-                    new CopyObjectRequest(b, k, b, k)
-                            .withNewObjectMetadata(n)
-            );
+            PutObjectRequest req =
+                    new PutObjectRequest(b, k, s3Object.getObjectContent(), updated);
+
+            s3.putObject(req);
 
             return meta;
 
         } catch (Exception e) {
-
             throw new ObjectStoreAdapterException(
                     "OBJECT_STORE_NOT_ACCESSIBLE",
                     "Failed to update object metadata",
                     e
             );
+        } finally {
+            if (s3Object != null) {
+                try { s3Object.close(); } catch (Exception ignored) {}
+            }
         }
     }
+
 
 
     @Override
