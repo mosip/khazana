@@ -26,7 +26,6 @@ public class S3Adapter implements ObjectStoreAdapter {
 
     private static final String TAGS_FILENAME = "tags";
     private static final String SEPARATOR = "/";
-    private static final String PLACEHOLDER = "_";
 
     private final Logger LOGGER = LoggerConfiguration.logConfig(S3Adapter.class);
 
@@ -97,13 +96,23 @@ public class S3Adapter implements ObjectStoreAdapter {
     }
 
     private String key(String container, String source, String process, String object) {
-        String s = (source == null || source.isBlank()) ? PLACEHOLDER : source;
-        String p = (process == null || process.isBlank()) ? PLACEHOLDER : process;
+
+        // 🔒 MOSIP compatibility: "Tags" is NOT a storage path
+        if ("Tags".equalsIgnoreCase(source)) {
+            source = null;
+            process = null;
+        }
+
+        // 🔒 Process without source is invalid in MOSIP
+        if (source == null || source.isBlank()) {
+            process = null;
+        }
 
         return useAccountAsBucketname
-                ? ObjectStoreUtil.getName(container, s, p, object)
-                : ObjectStoreUtil.getName(s, p, object);
+                ? ObjectStoreUtil.getName(container, source, process, object)
+                : ObjectStoreUtil.getName(source, process, object);
     }
+
 
     /* ───────────── Core API ───────────── */
 
@@ -217,6 +226,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             return meta;
 
         } catch (Exception e) {
+
             throw new ObjectStoreAdapterException(
                     "OBJECT_STORE_NOT_ACCESSIBLE",
                     "Failed to update object metadata",
