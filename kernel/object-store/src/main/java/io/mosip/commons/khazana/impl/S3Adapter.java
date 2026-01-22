@@ -178,9 +178,13 @@ public class S3Adapter implements ObjectStoreAdapter {
     }
 
     @Override
-    public Map<String, Object> addObjectMetaData(String account, String container,
-                                                 String source, String process,
-                                                 String objectName, Map<String, Object> meta) {
+    public Map<String, Object> addObjectMetaData(
+            String account,
+            String container,
+            String source,
+            String process,
+            String objectName,
+            Map<String, Object> meta) {
 
         String b = bucket(account, container);
         String k = key(container, source, process, objectName);
@@ -197,16 +201,18 @@ public class S3Adapter implements ObjectStoreAdapter {
             ObjectMetadata n = new ObjectMetadata();
             n.setUserMetadata(merged);
 
-            // 🔒 Preserve ALL system metadata
+            // ✅ Preserve system metadata (SAFE SET)
             n.setContentType(old.getContentType());
             n.setContentEncoding(old.getContentEncoding());
             n.setCacheControl(old.getCacheControl());
             n.setContentDisposition(old.getContentDisposition());
             n.setContentLanguage(old.getContentLanguage());
-            n.setContentLength(old.getContentLength());
+            // ❌ DO NOT set contentLength
 
-            s3.copyObject(new CopyObjectRequest(b, k, b, k)
-                    .withNewObjectMetadata(n));
+            s3.copyObject(
+                    new CopyObjectRequest(b, k, b, k)
+                            .withNewObjectMetadata(n)
+            );
 
             return meta;
 
@@ -219,6 +225,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         }
     }
 
+
     @Override
     public Map<String, Object> addObjectMetaData(String account, String container,
                                                  String source, String process,
@@ -227,6 +234,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         meta.put(key, value);
         return addObjectMetaData(account, container, source, process, objectName, meta);
     }
+
 
     /* ───────────── Tags (ISOLATED & SAFE) ───────────── */
 
