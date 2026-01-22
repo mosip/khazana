@@ -338,6 +338,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             req.setContinuationToken(result.getNextContinuationToken());
         } while (result.isTruncated());
 
+<<<<<<< Updated upstream
         List<ObjectDto> dtos = new ArrayList<>();
         for (S3ObjectSummary summary : objectSummaries) {
             String key = summary.getKey();
@@ -348,6 +349,40 @@ public class S3Adapter implements ObjectStoreAdapter {
                 if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME)) continue;
             } else {
                 if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME)) continue;
+=======
+                String[] parts = o.getKey().split(SEPARATOR);
+
+                if (useAccountAsBucketname && parts.length > 0) {
+                    parts = Arrays.copyOfRange(parts, 1, parts.length);
+                }
+
+                // 🔒 Skip empty / folder marker objects
+                if (parts.length == 0 || parts[parts.length - 1].isBlank()) {
+                    continue;
+                }
+
+                // 🔒 Skip ALL tag objects (root cause fix)
+                if (parts.length > 0 && TAGS_FILENAME.equalsIgnoreCase(parts[0])) {
+                    continue;
+                }
+
+                if (parts.length != 1 && parts.length != 2 && parts.length != 3) {
+                    LOGGER.warn("Invalid MOSIP object key: {}", o.getKey());
+                    continue;
+                }
+
+                String src = parts.length >= 2 ? parts[0] : null;
+                String proc = parts.length == 3 ? parts[1] : null;
+                String obj = parts[parts.length - 1];
+
+                // 🔒 Final defensive guard
+                if ("Tags".equalsIgnoreCase(src)) {
+                    LOGGER.warn("Skipping tag-like object key: {}", o.getKey());
+                    continue;
+                }
+
+                out.add(new ObjectDto(src, proc, obj, o.getLastModified()));
+>>>>>>> Stashed changes
             }
 
             String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
@@ -374,12 +409,17 @@ public class S3Adapter implements ObjectStoreAdapter {
         return dtos;
     }
 
+<<<<<<< Updated upstream
     private String[] removeIdFromObjectPath(boolean useAccountAsBucketname, String[] keys) {
         if (useAccountAsBucketname && keys.length > 0) {
             return Arrays.copyOfRange(keys, 1, keys.length);
         }
         return keys;
     }
+=======
+
+    /* ───────────── Unsupported APIs ───────────── */
+>>>>>>> Stashed changes
 
     /**
      * Removing container not supported in S3Adapter
