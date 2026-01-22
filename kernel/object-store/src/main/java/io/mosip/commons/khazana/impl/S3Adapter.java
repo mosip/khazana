@@ -345,32 +345,26 @@ public class S3Adapter implements ObjectStoreAdapter {
 
             // Skip tag marker objects
             if (useAccountAsBucketname) {
-                if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
-                    continue;
+                if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME)) continue;
             } else {
-                if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
-                    continue;
+                if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME)) continue;
             }
 
-            // Remove first part for account-bucket, else keep as is
             String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
-
             if (keys.length == 0) continue;
 
-            ObjectDto objectDto = null;
-            switch (keys.length) {
-                case 1:
-                    objectDto = new ObjectDto(null, null, keys[0], summary.getLastModified());
-                    break;
-                case 2:
-                    objectDto = new ObjectDto(keys[0], null, keys[1], summary.getLastModified());
-                    break;
-                case 3:
-                    objectDto = new ObjectDto(keys[0], keys[1], keys[2], summary.getLastModified());
-                    break;
+            String source = null, process = null, objectName = null;
+            if (keys.length >= 3) {
+                source = keys[keys.length - 3];
+                process = keys[keys.length - 2];
+                objectName = keys[keys.length - 1];
+            } else if (keys.length == 2) {
+                process = keys[0];
+                objectName = keys[1];
+            } else if (keys.length == 1) {
+                objectName = keys[0];
             }
-            if (objectDto != null)
-                dtos.add(objectDto);
+            dtos.add(new ObjectDto(source, process, objectName, summary.getLastModified()));
         }
         return dtos;
     }
