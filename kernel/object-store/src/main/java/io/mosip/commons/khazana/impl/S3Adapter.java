@@ -17,6 +17,8 @@ import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -113,21 +115,32 @@ public class S3Adapter implements ObjectStoreAdapter {
                 : ObjectStoreUtil.getName(source, process, object);
     }
 
-
-    /* ───────────── Core API ───────────── */
-
     @Override
-    public boolean putObject(String account, String container, String source,
-                             String process, String objectName, InputStream data) {
+    public boolean putObject(
+            String account,
+            String container,
+            String source,
+            String process,
+            String objectName,
+            InputStream data) {
+
         try {
-            Upload u = tm.upload(new PutObjectRequest(
+            // 🔒 Make stream replayable + deterministic
+            byte[] bytes = IOUtils.toByteArray(data);
+
+            ObjectMetadata meta = new ObjectMetadata();
+            meta.setContentLength(bytes.length);
+
+            Upload upload = tm.upload(new PutObjectRequest(
                     bucket(account, container),
                     key(container, source, process, objectName),
-                    data,
-                    new ObjectMetadata()
+                    new ByteArrayInputStream(bytes),
+                    meta
             ));
-            u.waitForCompletion();
+
+            upload.waitForCompletion();
             return true;
+
         } catch (Exception e) {
             throw new ObjectStoreAdapterException("PUT_FAILED", e.getMessage(), e);
         }
@@ -205,16 +218,14 @@ public class S3Adapter implements ObjectStoreAdapter {
             ObjectMetadata old = s3Object.getObjectMetadata();
             ObjectMetadata updated = new ObjectMetadata();
 
-            // ✅ Preserve ALL existing user metadata
+            // user metadata
             if (old.getUserMetadata() != null) {
                 old.getUserMetadata().forEach(updated::addUserMetadata);
             }
-
-            // ✅ Merge new metadata
             meta.forEach((x, y) ->
                     updated.addUserMetadata(x, Objects.toString(y, null)));
 
-            // ✅ Preserve system metadata
+            // system metadata
             updated.setContentType(old.getContentType());
             updated.setContentEncoding(old.getContentEncoding());
             updated.setCacheControl(old.getCacheControl());
@@ -222,8 +233,15 @@ public class S3Adapter implements ObjectStoreAdapter {
             updated.setContentLanguage(old.getContentLanguage());
             updated.setContentLength(old.getContentLength());
 
+            // 🔒 encryption safety
+            if (old.getSSEAlgorithm() != null)
+                updated.setSSEAlgorithm(old.getSSEAlgorithm());
+
             PutObjectRequest req =
                     new PutObjectRequest(b, k, s3Object.getObjectContent(), updated);
+
+            // 🔒 CRITICAL
+            req.getRequestClientOptions().setReadLimit((int) updated.getContentLength());
 
             s3.putObject(req);
 
@@ -241,6 +259,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             }
         }
     }
+
 
 
 
