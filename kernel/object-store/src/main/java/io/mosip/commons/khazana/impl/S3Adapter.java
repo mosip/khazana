@@ -300,14 +300,20 @@ public class S3Adapter implements ObjectStoreAdapter {
             res = s3.listObjectsV2(r);
             for (S3ObjectSummary o : res.getObjectSummaries()) {
 
-                // 🔒 Never treat tags as packets
-                if (o.getKey().startsWith(TAGS_FILENAME + SEPARATOR)) {
+                String[] parts = o.getKey().split(SEPARATOR);
+
+                if (useAccountAsBucketname && parts.length > 0) {
+                    parts = Arrays.copyOfRange(parts, 1, parts.length);
+                }
+
+                // 🔒 Skip empty / folder marker objects
+                if (parts.length == 0 || parts[parts.length - 1].isBlank()) {
                     continue;
                 }
 
-                String[] parts = o.getKey().split(SEPARATOR);
-                if (useAccountAsBucketname && parts.length > 0) {
-                    parts = Arrays.copyOfRange(parts, 1, parts.length);
+                // 🔒 Skip ALL tag objects (root cause fix)
+                if (parts.length > 0 && TAGS_FILENAME.equalsIgnoreCase(parts[0])) {
+                    continue;
                 }
 
                 if (parts.length != 1 && parts.length != 2 && parts.length != 3) {
@@ -319,6 +325,12 @@ public class S3Adapter implements ObjectStoreAdapter {
                 String proc = parts.length == 3 ? parts[1] : null;
                 String obj = parts[parts.length - 1];
 
+                // 🔒 Final defensive guard
+                if ("Tags".equalsIgnoreCase(src)) {
+                    LOGGER.warn("Skipping tag-like object key: {}", o.getKey());
+                    continue;
+                }
+
                 out.add(new ObjectDto(src, proc, obj, o.getLastModified()));
             }
             r.setContinuationToken(res.getNextContinuationToken());
@@ -326,6 +338,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
         return out;
     }
+
 
     /* ───────────── Unsupported APIs ───────────── */
 
