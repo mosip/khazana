@@ -1,55 +1,104 @@
 package io.mosip.commons.khazana.util;
 
+/**
+ * Utility for building object store paths.
+ *
+ * IMPORTANT:
+ * - Preserves original MOSIP behavior
+ * - Does NOT collapse mandatory path depth implicitly
+ * - Performance-optimized (single StringBuilder, no concat chains)
+ *
+ * Domain guarantees (e.g., placeholder handling) must be enforced by caller
+ * (S3Adapter), not by this utility.
+ */
 public final class ObjectStoreUtil {
 
     private static final String SEPARATOR = "/";
 
     private ObjectStoreUtil() {
-        // Utility class – prevent instantiation
+        // prevent instantiation
     }
 
     /**
      * Build path with source, process, and objectName.
+     * Original behavior preserved:
+     *   source/process/objectName
+     *   process omitted if null/empty
+     *   objectName ALWAYS appended
      */
     public static String getName(String source, String process, String objectName) {
-        return join(source, process, objectName);
+        StringBuilder sb = new StringBuilder(estimate(source, process, objectName));
+
+        if (isNotEmpty(source)) {
+            sb.append(source).append(SEPARATOR);
+        }
+        if (isNotEmpty(process)) {
+            sb.append(process).append(SEPARATOR);
+        }
+
+        // objectName is mandatory (as per original contract)
+        sb.append(objectName);
+
+        return sb.toString();
     }
 
     /**
      * Build path with container, source, process, and objectName.
+     * Original behavior preserved:
+     *   container/source/process/objectName
      */
     public static String getName(String container, String source, String process, String objectName) {
-        return join(container, source, process, objectName);
+        StringBuilder sb = new StringBuilder(estimate(container, source, process, objectName));
+
+        if (isNotEmpty(container)) {
+            sb.append(container).append(SEPARATOR);
+        }
+        if (isNotEmpty(source)) {
+            sb.append(source).append(SEPARATOR);
+        }
+        if (isNotEmpty(process)) {
+            sb.append(process).append(SEPARATOR);
+        }
+
+        sb.append(objectName);
+
+        return sb.toString();
     }
 
     /**
-     * Build path with objectName and tagName.
+     * Build path for tags.
+     * Original behavior preserved:
+     *   objectName/tagName
      */
     public static String getName(String objectName, String tagName) {
-        return join(objectName, tagName);
+        StringBuilder sb = new StringBuilder(estimate(objectName, tagName));
+
+        if (isNotEmpty(objectName)) {
+            sb.append(objectName).append(SEPARATOR);
+        }
+        if (isNotEmpty(tagName)) {
+            sb.append(tagName);
+        }
+
+        return sb.toString();
+    }
+
+    /* ───────────── Internal helpers ───────────── */
+
+    private static boolean isNotEmpty(String s) {
+        return s != null && !s.isEmpty();
     }
 
     /**
-     * High-performance joiner that skips null or empty parts and adds SEPARATOR between them.
+     * Rough capacity estimation to avoid StringBuilder resizing.
      */
-    private static String join(String... parts) {
-        // Pre-size StringBuilder roughly to avoid repeated growth
-        int estimatedLength = 0;
-        for (String part : parts) {
-            if (part != null && !part.isEmpty()) {
-                estimatedLength += part.length() + 1; // +1 for separator
+    private static int estimate(String... parts) {
+        int len = 0;
+        for (String p : parts) {
+            if (p != null) {
+                len += p.length() + 1;
             }
         }
-
-        StringBuilder sb = new StringBuilder(Math.max(estimatedLength, 16));
-        for (String part : parts) {
-            if (part != null && !part.isEmpty()) {
-                if (sb.length() > 0) {
-                    sb.append(SEPARATOR);
-                }
-                sb.append(part);
-            }
-        }
-        return sb.toString();
+        return Math.max(len, 16);
     }
 }
