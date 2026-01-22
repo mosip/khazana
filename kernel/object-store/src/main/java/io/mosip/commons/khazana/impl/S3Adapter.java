@@ -343,7 +343,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             String key = summary.getKey();
             String[] tempKeys = key.split(SEPARATOR);
 
-            // Skip tag marker objects
+            // Skip tag marker objects as before
             if (useAccountAsBucketname) {
                 if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME)) continue;
             } else {
@@ -351,18 +351,23 @@ public class S3Adapter implements ObjectStoreAdapter {
             }
 
             String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
-            if (keys.length == 0) continue;
+            if (keys == null || keys.length == 0) continue;
 
             String source = null, process = null, objectName = null;
-            if (keys.length >= 3) {
+            if (keys.length == 1) {
+                objectName = keys[0];
+            } else if (keys.length == 2) {
+                source = keys[0];
+                objectName = keys[1];
+            } else if (keys.length == 3) {
+                source = keys[0];
+                process = keys[1];
+                objectName = keys[2];
+            } else if (keys.length > 3) {
+                // Extra defense: take the LAST three as source/process/objectName for safety
                 source = keys[keys.length - 3];
                 process = keys[keys.length - 2];
                 objectName = keys[keys.length - 1];
-            } else if (keys.length == 2) {
-                process = keys[0];
-                objectName = keys[1];
-            } else if (keys.length == 1) {
-                objectName = keys[0];
             }
             dtos.add(new ObjectDto(source, process, objectName, summary.getLastModified()));
         }
