@@ -208,36 +208,40 @@ public class S3Adapter implements ObjectStoreAdapter {
             String objectName,
             Map<String, Object> meta) {
 
-        String b = bucket(account, container);
-        String k = key(container, source, process, objectName);
+        String bucket = bucket(account, container);
+        String key = key(container, source, process, objectName);
 
         try {
-            ObjectMetadata old = s3.getObjectMetadata(b, k);
+            // 1️⃣ Read existing object metadata (HEAD only)
+            ObjectMetadata old = s3.getObjectMetadata(bucket, key);
 
-            ObjectMetadata updated = new ObjectMetadata();
-
-            // ✅ merge user metadata
+            // 2️⃣ Merge user metadata
             Map<String, String> merged = new HashMap<>();
             if (old.getUserMetadata() != null) {
                 merged.putAll(old.getUserMetadata());
             }
-            meta.forEach((x, y) -> merged.put(x, Objects.toString(y, null)));
+            meta.forEach((k, v) -> merged.put(k, Objects.toString(v, null)));
+
+            ObjectMetadata updated = new ObjectMetadata();
             updated.setUserMetadata(merged);
 
-            // ✅ preserve system metadata (SAFE ONLY)
+            // 3️⃣ Preserve system metadata (SAFE SET ONLY)
             updated.setContentType(old.getContentType());
             updated.setContentEncoding(old.getContentEncoding());
             updated.setCacheControl(old.getCacheControl());
             updated.setContentDisposition(old.getContentDisposition());
             updated.setContentLanguage(old.getContentLanguage());
 
-            // ❌ DO NOT set contentLength
-            // ❌ DO NOT stream object
-            // ❌ DO NOT re-upload data
-
+            // 5️⃣ Metadata-only overwrite using CopyObject
             CopyObjectRequest req =
-                    new CopyObjectRequest(b, k, b, k)
+                    new CopyObjectRequest(bucket, key, bucket, key)
                             .withNewObjectMetadata(updated);
+            // 🔐 Preserve KMS encryption (ONLY place allowed)
+            if (old.getSSEAwsKmsKeyId() != null) {
+                req.setSSEAwsKeyManagementParams(
+                        new SSEAwsKeyManagementParams(old.getSSEAwsKmsKeyId())
+                );
+            }
 
             s3.copyObject(req);
 
@@ -251,6 +255,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             );
         }
     }
+
 
 
 
