@@ -211,39 +211,35 @@ public class S3Adapter implements ObjectStoreAdapter {
         String b = bucket(account, container);
         String k = key(container, source, process, objectName);
 
-        S3Object s3Object = null;
         try {
-            s3Object = s3.getObject(b, k);
+            ObjectMetadata old = s3.getObjectMetadata(b, k);
 
-            ObjectMetadata old = s3Object.getObjectMetadata();
             ObjectMetadata updated = new ObjectMetadata();
 
-            // user metadata
+            // ✅ merge user metadata
+            Map<String, String> merged = new HashMap<>();
             if (old.getUserMetadata() != null) {
-                old.getUserMetadata().forEach(updated::addUserMetadata);
+                merged.putAll(old.getUserMetadata());
             }
-            meta.forEach((x, y) ->
-                    updated.addUserMetadata(x, Objects.toString(y, null)));
+            meta.forEach((x, y) -> merged.put(x, Objects.toString(y, null)));
+            updated.setUserMetadata(merged);
 
-            // system metadata
+            // ✅ preserve system metadata (SAFE ONLY)
             updated.setContentType(old.getContentType());
             updated.setContentEncoding(old.getContentEncoding());
             updated.setCacheControl(old.getCacheControl());
             updated.setContentDisposition(old.getContentDisposition());
             updated.setContentLanguage(old.getContentLanguage());
-            updated.setContentLength(old.getContentLength());
 
-            // 🔒 encryption safety
-            if (old.getSSEAlgorithm() != null)
-                updated.setSSEAlgorithm(old.getSSEAlgorithm());
+            // ❌ DO NOT set contentLength
+            // ❌ DO NOT stream object
+            // ❌ DO NOT re-upload data
 
-            PutObjectRequest req =
-                    new PutObjectRequest(b, k, s3Object.getObjectContent(), updated);
+            CopyObjectRequest req =
+                    new CopyObjectRequest(b, k, b, k)
+                            .withNewObjectMetadata(updated);
 
-            // 🔒 CRITICAL
-            req.getRequestClientOptions().setReadLimit((int) updated.getContentLength());
-
-            s3.putObject(req);
+            s3.copyObject(req);
 
             return meta;
 
@@ -253,10 +249,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                     "Failed to update object metadata",
                     e
             );
-        } finally {
-            if (s3Object != null) {
-                try { s3Object.close(); } catch (Exception ignored) {}
-            }
         }
     }
 
