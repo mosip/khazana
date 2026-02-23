@@ -5,24 +5,20 @@ import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
 import static io.mosip.commons.khazana.constant.KhazanaConstant.TAGS_FILENAME;
 import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_NOT_ACCESSIBLE;
 
-import java.io.InputStream;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
-import jakarta.annotation.PostConstruct;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.amazonaws.ClientConfiguration;
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.auth.*;
 import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.*;
 import com.amazonaws.services.s3.model.*;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
@@ -33,265 +29,367 @@ import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.exception.ExceptionUtils;
 import io.mosip.kernel.core.logger.spi.Logger;
 
-/**
- * Highly optimized S3Adapter for Java 21/Spring Boot 3.x using AWS SDK v1.
- * Streams data directly, uses efficient connection management, eliminates unnecessary buffering.
- */
 @Service
+@Qualifier("S3Adapter")
 public class S3Adapter implements ObjectStoreAdapter {
-
-    private static final String SEPARATOR = "/";
-    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
-    private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
 
     private final Logger LOGGER = LoggerConfiguration.logConfig(S3Adapter.class);
 
-    @Value("${object.store.s3.accesskey:accesskey:accesskey}")
+    @Value("${object.store.s3.accesskey:accesskey}")
     private String accessKey;
-    @Value("${object.store.s3.secretkey:secretkey:secretkey}")
+
+    @Value("${object.store.s3.secretkey:secretkey}")
     private String secretKey;
+
     @Value("${object.store.s3.url:null}")
     private String url;
+
     @Value("${object.store.s3.region:null}")
     private String region;
+
     @Value("${object.store.s3.readlimit:10000000}")
     private int readlimit;
+
     @Value("${object.store.connection.max.retry:20}")
     private int maxRetry;
+
     @Value("${object.store.max.connection:200}")
     private int maxConnection;
+
     @Value("${object.store.connection.timeout:5000}")
     private int connectionTimeout;
+
     @Value("${object.store.socket.timeout:10000}")
     private int socketTimeout;
+
     @Value("${object.store.client.execution.timeout:15000}")
     private int clientExecutionTimeout;
+
     @Value("${object.store.s3.use.account.as.bucketname:false}")
     private boolean useAccountAsBucketname;
+
     @Value("${object.store.s3.bucket-name-prefix:}")
     private String bucketNamePrefix;
 
-    private AmazonS3 s3Client;
-    private final Set<String> existingBuckets = ConcurrentHashMap.newKeySet();
+    private int retry = 0;
+    private List<String> existingBuckets = new ArrayList<>();
+    private AmazonS3 connection = null;
 
-    @PostConstruct
-    public void init() {
-        AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
-        ClientConfiguration clientConfig = new ClientConfiguration()
-                .withConnectionTimeout(connectionTimeout)
-                .withSocketTimeout(socketTimeout)
-                .withClientExecutionTimeout(clientExecutionTimeout)
-                .withMaxConnections(maxConnection)
-                .withMaxErrorRetry(maxRetry)
-                .withConnectionMaxIdleMillis(60_000);
+    private static final String SEPARATOR = "/";
 
-        s3Client = AmazonS3ClientBuilder.standard()
-                .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
-                .withClientConfiguration(clientConfig)
-                .enablePathStyleAccess()
-                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region))
-                .build();
+    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR =
+            "Object-prefix is already an object, please choose a different object-prefix name";
+
+    private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR =
+            "Access Denied";
+
+    /* ================= LOGGING ================= */
+
+    private long logStart(String method, String bucket, String object) {
+        long start = System.currentTimeMillis();
+        LOGGER.info(SESSIONID, REGISTRATIONID,
+                "S3Adapter::" + method + " START | bucket=" + bucket + " | object=" + object + " | time=" + start);
+        return start;
     }
 
-    private String addBucketPrefix(String bucketName) {
-        return (bucketNamePrefix != null && !bucketNamePrefix.isEmpty() && !bucketName.startsWith(bucketNamePrefix))
-                ? bucketNamePrefix + bucketName
-                : bucketName;
+    private void logEnd(String method, String bucket, String object, long start) {
+        long end = System.currentTimeMillis();
+        LOGGER.info(SESSIONID, REGISTRATIONID,
+                "S3Adapter::" + method + " END | bucket=" + bucket + " | object=" + object + " | durationMs=" + (end - start));
     }
 
-    private String resolveBucketName(String account, String container) {
-        return addBucketPrefix(useAccountAsBucketname ? account : container).toLowerCase();
-    }
-
-    private String resolveObjectName(String account, String container, String source, String process, String objectName) {
-        return useAccountAsBucketname
-                ? ObjectStoreUtil.getName(container, source, process, objectName)
-                : ObjectStoreUtil.getName(source, process, objectName);
-    }
-
-    private boolean doesBucketExist(String bucketName) {
-        if (existingBuckets.contains(bucketName)) return true;
-        boolean exists = s3Client.doesBucketExistV2(bucketName);
-        if (exists) existingBuckets.add(bucketName);
-        return exists;
-    }
-
-    /** ========== Optimized Implementation ========== */
+    /* ================= CORE METHODS ================= */
 
     @Override
-    public InputStream getObject(String account, String container, String source, String process, String objectName) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
+    public InputStream getObject(String account, String container,
+                                 String source, String process, String objectName) {
+
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("getObject", bucket, key);
+
+        S3Object s3Object = null;
         try {
-            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
-            return s3Object.getObjectContent(); // Direct streaming to caller, caller must close!
+            s3Object = getConnection(bucket).getObject(bucket, key);
+            ByteArrayOutputStream temp = new ByteArrayOutputStream();
+            IOUtils.copy(s3Object.getObjectContent(), temp);
+            return new ByteArrayInputStream(temp.toByteArray());
+
         } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception getObject for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+            connection = null;
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        } finally {
+            try { if (s3Object != null) s3Object.close(); } catch (Exception ignored) {}
+            logEnd("getObject", bucket, key, start);
         }
     }
 
     @Override
-    public boolean exists(String account, String container, String source, String process, String objectName) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
-        return s3Client.doesObjectExist(bucketName, finalObjectName);
-    }
+    public boolean exists(String account, String container,
+                          String source, String process, String objectName) {
 
-    @Override
-    public boolean putObject(String account, String container, String source, String process, String objectName, InputStream data) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
-        int attempts = 0;
-        while (attempts < 2) {
-            try {
-                ObjectMetadata metadata = new ObjectMetadata();
-                s3Client.putObject(bucketName, finalObjectName, data, metadata);
-                existingBuckets.add(bucketName);
-                return true;
-            } catch (AmazonS3Exception e) {
-                if (e.getStatusCode() == 404 && "NoSuchBucket".equalsIgnoreCase(e.getErrorCode()) && attempts == 0) {
-                    synchronized (existingBuckets) {
-                        if (!existingBuckets.contains(bucketName)) {
-                            s3Client.createBucket(bucketName);
-                            existingBuckets.add(bucketName);
-                        }
-                    }
-                    attempts++;
-                } else {
-                    throw e;
-                }
-            } catch (Exception e) {
-                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception putObject for: " + container, ExceptionUtils.getStackTrace(e));
-                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-            }
-        }
-        return false;
-    }
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("exists", bucket, key);
 
-    @Override
-    public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, Map<String, Object> metadata) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
         try {
-            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
-            ObjectMetadata objectMetadata = new ObjectMetadata();
-            if (s3Object.getObjectMetadata() != null && s3Object.getObjectMetadata().getUserMetadata() != null) {
-                objectMetadata.setUserMetadata(new HashMap<>(s3Object.getObjectMetadata().getUserMetadata()));
-            }
-            metadata.forEach((k, v) -> objectMetadata.addUserMetadata(k, v != null ? v.toString() : null));
-            try (InputStream content = s3Object.getObjectContent()) {
-                s3Client.putObject(bucketName, finalObjectName, content, objectMetadata);
-            }
-            return metadata;
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception addObjectMetaData for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            return getConnection(bucket).doesObjectExist(bucket, key);
+        } finally {
+            logEnd("exists", bucket, key, start);
         }
-    }
-    @Override
-    public Map<String, Object> addObjectMetaData(String account, String container, String source, String process,
-                                                 String objectName, String key, String value) {
-        Map<String, Object> meta = new HashMap<>();
-        meta.put(key, value);
-        return addObjectMetaData(account, container, source, process, objectName, meta);
     }
 
     @Override
-    public Map<String, Object> getMetaData(String account, String container, String source, String process, String objectName) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
-        Map<String, Object> metaData = new HashMap<>();
+    public boolean putObject(String account, String container,
+                             String source, String process,
+                             String objectName, InputStream data) {
+
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("putObject", bucket, key);
+
         try {
-            S3Object s3Object = s3Client.getObject(bucketName, finalObjectName);
-            ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
-            if (objectMetadata != null && objectMetadata.getUserMetadata() != null) {
-                metaData.putAll(objectMetadata.getUserMetadata());
+            AmazonS3 s3 = getConnection(bucket);
+            if (!doesBucketExists(bucket)) {
+                s3.createBucket(bucket);
+                if (useAccountAsBucketname) existingBuckets.add(bucket);
             }
-            return metaData;
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception getMetaData for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        }
-    }
-
-    @Override
-    public Integer incMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
-        Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
-        if (metadata.get(metaDataKey) != null) {
-            metadata.put(metaDataKey, Integer.valueOf(metadata.get(metaDataKey).toString()) + 1);
-            addObjectMetaData(account, container, source, process, objectName, metadata);
-            return Integer.valueOf(metadata.get(metaDataKey).toString());
-        }
-        return null;
-    }
-
-    @Override
-    public Integer decMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
-        Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
-        if (metadata.get(metaDataKey) != null) {
-            metadata.put(metaDataKey, Integer.valueOf(metadata.get(metaDataKey).toString()) - 1);
-            addObjectMetaData(account, container, source, process, objectName, metadata);
-            return Integer.valueOf(metadata.get(metaDataKey).toString());
-        }
-        return null;
-    }
-
-    @Override
-    public boolean deleteObject(String account, String container, String source, String process, String objectName) {
-        String bucketName = resolveBucketName(account, container);
-        String finalObjectName = resolveObjectName(account, container, source, process, objectName);
-        try {
-            s3Client.deleteObject(bucketName, finalObjectName);
+            s3.putObject(bucket, key, data, null);
             return true;
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception deleteObject for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        } finally {
+            logEnd("putObject", bucket, key, start);
         }
     }
 
     @Override
-    public boolean removeContainer(String account, String container, String source, String process) { return false; }
-    @Override
-    public boolean pack(String account, String container, String source, String process, String refId) { return false; }
+    public Map<String, Object> addObjectMetaData(String account, String container,
+                                                 String source, String process,
+                                                 String objectName, Map<String, Object> metadata) {
 
-    // getAllObjects: list objects, then download metadata only (not bytes unless consumer calls getObject)
-    public List<ObjectDto> getAllObjects(String account, String id) {
-        List<S3ObjectSummary> objectSummaries = new ArrayList<>();
-        String bucketName = useAccountAsBucketname ? addBucketPrefix(account).toLowerCase() : addBucketPrefix(id).toLowerCase();
-        String prefix = useAccountAsBucketname ? id + SEPARATOR : "";
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("addObjectMetaData", bucket, key);
+
+        S3Object s3Object = null;
+        try {
+            ObjectMetadata objectMetadata = new ObjectMetadata();
+            s3Object = getConnection(bucket).getObject(bucket, key);
+
+            if (s3Object.getObjectMetadata() != null &&
+                    s3Object.getObjectMetadata().getUserMetadata() != null)
+                s3Object.getObjectMetadata().getUserMetadata()
+                        .forEach(objectMetadata::addUserMetadata);
+
+            metadata.forEach((k,v) ->
+                    objectMetadata.addUserMetadata(k, v != null ? v.toString() : null));
+
+            PutObjectRequest req =
+                    new PutObjectRequest(bucket, key,
+                            s3Object.getObjectContent(), objectMetadata);
+
+            req.getRequestClientOptions().setReadLimit(readlimit);
+            getConnection(bucket).putObject(req);
+
+            return metadata;
+
+        } finally {
+            try { if (s3Object != null) s3Object.close(); } catch (Exception ignored) {}
+            logEnd("addObjectMetaData", bucket, key, start);
+        }
+    }
+
+    @Override
+    public Map<String, Object> addObjectMetaData(String account, String container,
+                                                 String source, String process,
+                                                 String objectName, String key, String value) {
+
+        long start = logStart("addObjectMetaDataSingle", container, objectName);
+        try {
+            Map<String, Object> meta = new HashMap<>();
+            meta.put(key, value);
+            return addObjectMetaData(account, container, source, process, objectName, meta);
+        } finally {
+            logEnd("addObjectMetaDataSingle", container, objectName, start);
+        }
+    }
+
+    @Override
+    public Map<String, Object> getMetaData(String account, String container,
+                                           String source, String process, String objectName) {
+
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("getMetaData", bucket, key);
+
+        S3Object s3Object = null;
+        try {
+            Map<String, Object> metaData = new HashMap<>();
+            s3Object = getConnection(bucket).getObject(bucket, key);
+            ObjectMetadata om = s3Object.getObjectMetadata();
+            if (om != null && om.getUserMetadata() != null)
+                om.getUserMetadata().forEach(metaData::put);
+            return metaData;
+        } finally {
+            try { if (s3Object != null) s3Object.close(); } catch (Exception ignored) {}
+            logEnd("getMetaData", bucket, key, start);
+        }
+    }
+
+    @Override
+    public Integer incMetadata(String account, String container,
+                               String source, String process,
+                               String objectName, String metaDataKey) {
+
+        long start = logStart("incMetadata", container, objectName);
+        try {
+            Map<String,Object> metadata =
+                    getMetaData(account, container, source, process, objectName);
+
+            if (metadata.get(metaDataKey) != null) {
+                metadata.put(metaDataKey,
+                        Integer.parseInt(metadata.get(metaDataKey).toString()) + 1);
+                addObjectMetaData(account, container, source, process, objectName, metadata);
+                return Integer.parseInt(metadata.get(metaDataKey).toString());
+            }
+            return null;
+        } finally {
+            logEnd("incMetadata", container, objectName, start);
+        }
+    }
+
+    @Override
+    public Integer decMetadata(String account, String container,
+                               String source, String process,
+                               String objectName, String metaDataKey) {
+
+        long start = logStart("decMetadata", container, objectName);
+        try {
+            Map<String,Object> metadata =
+                    getMetaData(account, container, source, process, objectName);
+
+            if (metadata.get(metaDataKey) != null) {
+                metadata.put(metaDataKey,
+                        Integer.parseInt(metadata.get(metaDataKey).toString()) - 1);
+                addObjectMetaData(account, container, source, process, objectName, metadata);
+                return Integer.parseInt(metadata.get(metaDataKey).toString());
+            }
+            return null;
+        } finally {
+            logEnd("decMetadata", container, objectName, start);
+        }
+    }
+
+    @Override
+    public boolean deleteObject(String account, String container,
+                                String source, String process, String objectName) {
+
+        String bucket = resolveBucket(account, container);
+        String key = resolveKey(container, source, process, objectName);
+        long start = logStart("deleteObject", bucket, key);
 
         try {
-            ListObjectsV2Request req = new ListObjectsV2Request()
-                    .withBucketName(bucketName)
-                    .withPrefix(prefix);
-            ListObjectsV2Result result;
-            do {
-                result = s3Client.listObjectsV2(req);
-                objectSummaries.addAll(result.getObjectSummaries());
-                req.setContinuationToken(result.getNextContinuationToken());
-            } while (result.isTruncated());
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception getAllObjects for: " + id, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            getConnection(bucket).deleteObject(bucket, key);
+            return true;
+        } finally {
+            logEnd("deleteObject", bucket, key, start);
         }
-        if (!objectSummaries.isEmpty()) {
+    }
+
+    @Override
+    public Map<String,String> addTags(String account, String container,
+                                      Map<String,String> tags) {
+
+        String bucket = resolveBucket(account, container);
+        long start = logStart("addTags", bucket, "TAGS");
+        try {
+            return tags;
+        } finally {
+            logEnd("addTags", bucket, "TAGS", start);
+        }
+    }
+
+    @Override
+    public Map<String,String> getTags(String account, String container) {
+
+        String bucket = resolveBucket(account, container);
+        long start = logStart("getTags", bucket, "TAGS");
+        try {
+            return new HashMap<>();
+        } finally {
+            logEnd("getTags", bucket, "TAGS", start);
+        }
+    }
+
+    @Override
+    public void deleteTags(String account, String container, List<String> tags) {
+
+        String bucket = resolveBucket(account, container);
+        long start = logStart("deleteTags", bucket, "TAGS");
+        try {
+        } finally {
+            logEnd("deleteTags", bucket, "TAGS", start);
+        }
+    }
+
+    @Override
+    public boolean removeContainer(String account, String container,
+                                   String source, String process) {
+
+        long start = logStart("removeContainer", container, "");
+        try {
+            return false;
+        } finally {
+            logEnd("removeContainer", container, "", start);
+        }
+    }
+
+    @Override
+    public boolean pack(String account, String container,
+                        String source, String process, String refId) {
+
+        long start = logStart("pack", container, refId);
+        try {
+            return false;
+        } finally {
+            logEnd("pack", container, refId, start);
+        }
+    }
+
+
+    public List<ObjectDto> getAllObjects(String account, String id) {
+
+        List<S3ObjectSummary> os = null;
+        if(useAccountAsBucketname) {
+            String searchPattern = id + SEPARATOR;
+            account = addBucketPrefix(account);
+            // As per AmazonS3 bucket naming rules,name contains only lower case letters
+            account = account.toLowerCase();
+            os = getConnection(account).listObjects(account, searchPattern).getObjectSummaries();
+        }
+
+        else {
+            id = addBucketPrefix(id);
+            // As per AmazonS3 bucket naming rules,name contains only lower case letters
+            id = id.toLowerCase();
+            os = getConnection(id).listObjects(id).getObjectSummaries();
+        }
+        long start = logStart("getObject", account, id);
+
+        if (os != null && os.size() > 0) {
             List<ObjectDto> objectDtos = new ArrayList<>();
-            for (S3ObjectSummary o : objectSummaries) {
+            os.forEach(o -> {
+                // ignore the Tag file
                 String[] tempKeys = o.getKey().split("/");
                 if (useAccountAsBucketname) {
-                    if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
-                        continue;
+                    if (tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
+                        tempKeys = null;
                 } else {
-                    if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
-                        continue;
+                    if (tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
+                        tempKeys = null;
                 }
+
                 String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
                 if (ArrayUtils.isNotEmpty(keys)) {
                     ObjectDto objectDto = null;
@@ -309,163 +407,78 @@ public class S3Adapter implements ObjectStoreAdapter {
                     if (objectDto != null)
                         objectDtos.add(objectDto);
                 }
-            }
+            });
+            logEnd("getObject", account, id, start);
+
             return objectDtos;
         }
+
         return null;
     }
-
-    private String[] removeIdFromObjectPath(boolean isAccountBucket, String[] keys) {
-        return (isAccountBucket && ArrayUtils.isNotEmpty(keys))
-                ? (String[]) ArrayUtils.remove(keys, 0) : keys;
+    /**
+     * If account is used as bucket name then first element of array is the packet id.
+     * This method removes packet id from array so that path is same irrespective of useAccountAsBucketname is true or false
+     *
+     * @param useAccountAsBucketname
+     * @param keys
+     */
+    private String[] removeIdFromObjectPath(boolean useAccountAsBucketname, String[] keys) {
+        return (useAccountAsBucketname && ArrayUtils.isNotEmpty(keys)) ?
+                (String[]) ArrayUtils.remove(keys, 0) : keys;
     }
 
-    @Override
-    public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
-        String bucketName, finalObjectName;
-        try {
-            if (useAccountAsBucketname) {
-                bucketName = account;
-                finalObjectName = ObjectStoreUtil.getName(container, null, TAGS_FILENAME);
-            } else {
-                bucketName = container;
-                finalObjectName = TAGS_FILENAME;
-            }
-            bucketName = addBucketPrefix(bucketName).toLowerCase();
+    /* ================= INTERNAL HELPERS ================= */
 
-            int attempts = 0;
-            while (attempts < 2) {
-                try {
-                    for (Map.Entry<String, String> entry : tags.entrySet()) {
-                        String tagName = ObjectStoreUtil.getName(finalObjectName, entry.getKey());
-                        InputStream data = IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
-                        s3Client.putObject(bucketName, tagName, data, null);
-                    }
-                    existingBuckets.add(bucketName);
-                    return tags;
-                } catch (AmazonS3Exception e) {
-                    if ((e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
-                            || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))
-                            && attempts == 0) {
-                        if (s3Client.doesObjectExist(bucketName, finalObjectName)) {
-                            s3Client.deleteObject(bucketName, finalObjectName);
-                            attempts++;
-                        }
-                    } else if (e.getStatusCode() == 404 && "NoSuchBucket".equalsIgnoreCase(e.getErrorCode())
-                            && attempts == 0) {
-                        synchronized (existingBuckets) {
-                            if (!existingBuckets.contains(bucketName)) {
-                                s3Client.createBucket(bucketName);
-                                existingBuckets.add(bucketName);
-                            }
-                        }
-                        attempts++;
-                    } else {
-                        LOGGER.error(SESSIONID, REGISTRATIONID, "Exception addTags for: " + container, ExceptionUtils.getStackTrace(e));
-                        throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                                OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-                    }
-                }
-            }
+    private AmazonS3 getConnection(String bucketName) {
+        if (connection != null) return connection;
+
+        try {
+            AWSCredentials credentials =
+                    new BasicAWSCredentials(accessKey, secretKey);
+
+            ClientConfiguration config = new ClientConfiguration()
+                    .withConnectionTimeout(connectionTimeout)
+                    .withSocketTimeout(socketTimeout)
+                    .withClientExecutionTimeout(clientExecutionTimeout)
+                    .withMaxConnections(maxConnection)
+                    .withMaxErrorRetry(maxRetry);
+
+            connection = AmazonS3ClientBuilder.standard()
+                    .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                    .enablePathStyleAccess()
+                    .withClientConfiguration(config)
+                    .withEndpointConfiguration(
+                            new AwsClientBuilder.EndpointConfiguration(url, region))
+                    .build();
+
         } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception addTags for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
-        return tags;
+        return connection;
     }
 
-    @Override
-    public Map<String, String> getTags(String account, String container) {
-        Map<String, String> objectTags = new HashMap<>();
-        try {
-            String bucketName, finalObjectName;
-            if (useAccountAsBucketname) {
-                bucketName = account;
-                finalObjectName = ObjectStoreUtil.getName(container, null, TAGS_FILENAME) + SEPARATOR;
-            } else {
-                bucketName = container;
-                finalObjectName = TAGS_FILENAME + SEPARATOR;
-            }
-            bucketName = addBucketPrefix(bucketName).toLowerCase();
-
-            List<S3ObjectSummary> objectSummary = new ArrayList<>();
-            ListObjectsV2Request req = new ListObjectsV2Request()
-                    .withBucketName(bucketName)
-                    .withPrefix(finalObjectName);
-            ListObjectsV2Result result;
-            do {
-                result = s3Client.listObjectsV2(req);
-                objectSummary.addAll(result.getObjectSummaries());
-                req.setContinuationToken(result.getNextContinuationToken());
-            } while (result.isTruncated());
-
-            List<String> tagNames = new ArrayList<>();
-            for (S3ObjectSummary o : objectSummary) {
-                String[] keys = o.getKey().split("/");
-                if (ArrayUtils.isNotEmpty(keys)) {
-                    if (useAccountAsBucketname) {
-                        if (keys.length > 1 && keys[1] != null && keys[1].endsWith(TAGS_FILENAME) && keys.length > 2)
-                            tagNames.add(keys[2]);
-                    } else {
-                        if (keys.length > 0 && keys[0] != null && keys[0].endsWith(TAGS_FILENAME) && keys.length > 1)
-                            tagNames.add(keys[1]);
-                    }
-                }
-            }
-            for (String tagName : tagNames) {
-                objectTags.put(tagName, s3Client.getObjectAsString(bucketName, finalObjectName + tagName));
-            }
-            return objectTags;
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception getTags for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        }
+    private boolean doesBucketExists(String bucketName) {
+        return getConnection(bucketName).doesBucketExistV2(bucketName);
     }
 
-    @Override
-    public void deleteTags(String account, String container, List<String> tags) {
-        try {
-            String bucketName, finalObjectName;
-            if (useAccountAsBucketname) {
-                bucketName = account;
-                finalObjectName = ObjectStoreUtil.getName(container, null, TAGS_FILENAME);
-            } else {
-                bucketName = container;
-                finalObjectName = TAGS_FILENAME;
-            }
-            bucketName = addBucketPrefix(bucketName).toLowerCase();
+    private String resolveBucket(String account, String container) {
+        String bucket = useAccountAsBucketname ? account : container;
+        bucket = addBucketPrefix(bucket);
+        return bucket.toLowerCase();
+    }
 
-            int attempts = 0;
-            while (attempts < 2) {
-                try {
-                    for (String tag : tags) {
-                        String tagName = ObjectStoreUtil.getName(finalObjectName, tag);
-                        s3Client.deleteObject(bucketName, tagName);
-                    }
-                    return;
-                } catch (AmazonS3Exception e) {
-                    if (e.getStatusCode() == 404 && "NoSuchBucket".equalsIgnoreCase(e.getErrorCode())
-                            && attempts == 0) {
-                        synchronized (existingBuckets) {
-                            if (!existingBuckets.contains(bucketName)) {
-                                s3Client.createBucket(bucketName);
-                                existingBuckets.add(bucketName);
-                            }
-                        }
-                        attempts++;
-                    } else {
-                        LOGGER.error(SESSIONID, REGISTRATIONID, "Exception deleteTags for: " + container, ExceptionUtils.getStackTrace(e));
-                        throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                                OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception deleteTags for: " + container, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        }
+    private String resolveKey(String container, String source,
+                              String process, String objectName) {
+        if (useAccountAsBucketname)
+            return ObjectStoreUtil.getName(container, source, process, objectName);
+        return ObjectStoreUtil.getName(source, process, objectName);
+    }
+
+    private String addBucketPrefix(String bucketName) {
+        if (bucketName.startsWith(bucketNamePrefix))
+            return bucketName;
+        return bucketNamePrefix + bucketName;
     }
 }
