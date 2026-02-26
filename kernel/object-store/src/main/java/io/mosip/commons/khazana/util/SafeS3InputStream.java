@@ -1,6 +1,8 @@
 package io.mosip.commons.khazana.util;
 
 import com.amazonaws.services.s3.model.S3Object;
+import io.mosip.commons.khazana.config.LoggerConfiguration;
+import io.mosip.kernel.core.logger.spi.Logger;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,11 +15,15 @@ public class SafeS3InputStream extends InputStream {
 
     private static final int DRAIN_BUFFER_SIZE = 8192;
 
+    private static final long MAX_DRAIN_BYTES = 10 * 1024 * 1024; // safety cap: 10 MB
+
     private final S3Object s3Object;
     private final InputStream delegateStream;
     private final long contentLength;
     private long bytesRead = 0;
     private boolean fullyClosed = false;
+
+    private final Logger LOGGER = LoggerConfiguration.logConfig(SafeS3InputStream.class);
 
     public SafeS3InputStream(S3Object s3Object, long contentLength) {
         this.s3Object = s3Object;
@@ -93,40 +99,44 @@ public class SafeS3InputStream extends InputStream {
         if (fullyClosed) {
             return;
         }
-
         fullyClosed = true;
-        IOException closingException = null;
 
         try {
-            drainStream();
-        } catch (Exception e) {
-            if (e instanceof IOException) {
-                closingException = (IOException) e;
+            // Always attempt to drain — even if contentLength == -1 or bytesRead >= contentLength
+            // This is the most reliable way to suppress the warning
+            if (!isFullyRead() || contentLength <= 0) {  // also drain if length unknown
+                LOGGER.debug("SafeS3InputStream - draining to prevent AWS warning. Known length: {}, bytesRead: {}",
+                        contentLength, bytesRead);
+
+                byte[] buffer = new byte[DRAIN_BUFFER_SIZE];
+                long drained = 0;
+                int readBytes;
+
+                while ((readBytes = delegateStream.read(buffer)) != -1) {
+                    drained += readBytes;
+                    bytesRead += readBytes;
+
+                    // Safety: prevent infinite loop or huge objects from hanging
+                    if (drained > MAX_DRAIN_BYTES) {
+                        LOGGER.warn( "Drain exceeded safety limit of {} bytes - aborting drain", MAX_DRAIN_BYTES);
+                        break;
+                    }
+                }
+                LOGGER.debug("Drained {} additional bytes. Total read now: {}", drained, bytesRead);
+            } else {
+                LOGGER.debug("Stream fully consumed ({}/{} bytes) - no drain needed", bytesRead, contentLength);
             }
+
+            delegateStream.close();
+        } catch (IOException e) {
+            LOGGER.warn("Exception during drain/close of delegate stream", e);
         } finally {
             try {
-                if (delegateStream != null) {
-                    delegateStream.close();
-                }
+                s3Object.close();
+                LOGGER.debug( "S3Object closed");
             } catch (IOException e) {
-                if (closingException == null) {
-                    closingException = e;
-                }
-            } finally {
-                try {
-                    if (s3Object != null) {
-                        s3Object.close();
-                    }
-                } catch (IOException e) {
-                    if (closingException == null) {
-                        closingException = e;
-                    }
-                }
+                LOGGER.error("Failed to close S3Object", e);
             }
-        }
-
-        if (closingException != null) {
-            throw closingException;
         }
     }
 
@@ -154,7 +164,7 @@ public class SafeS3InputStream extends InputStream {
     }
 
     public boolean isFullyRead() {
-        return contentLength == -1 || bytesRead >= contentLength;
+        return contentLength > 0 && bytesRead >= contentLength;
     }
 
     public boolean isClosed() {
