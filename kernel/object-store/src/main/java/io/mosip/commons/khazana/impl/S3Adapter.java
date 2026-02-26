@@ -269,51 +269,68 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Override
     public Map<String, Object> getMetaData(String account, String container, String source, String process,
                                            String objectName) {
-        S3Object s3Object = null;
+        long startTime = System.currentTimeMillis();
+        LOGGER.info(SESSIONID, REGISTRATIONID,
+                "getMetaData started - account: {}, container: {}, source: {}, process: {}, objectName: {}",
+                account, container, source, process, objectName);
+
+        String bucketName;
+        String finalObjectName;
+
+        if (useAccountAsBucketname) {
+            finalObjectName = ObjectStoreUtil.getName(container, source, process, objectName);
+            bucketName = account;
+        } else {
+            finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
+            bucketName = container;
+        }
+
+        bucketName = addBucketPrefix(bucketName).toLowerCase();
+
+        Map<String, Object> metadataResult = new HashMap<>();
 
         try {
-            String finalObjectName = null;
-            String bucketName = null;
-
-            if (useAccountAsBucketname) {
-                finalObjectName = ObjectStoreUtil.getName(container, source, process, objectName);
-                bucketName = account;
-            } else {
-                finalObjectName = ObjectStoreUtil.getName(source, process, objectName);
-                bucketName = container;
-            }
-
-            bucketName = addBucketPrefix(bucketName);
-            bucketName = bucketName.toLowerCase();
-
-            Map<String, Object> metaData = new HashMap<>();
-
-            s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
-            ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
+            // Use metadata-only request (HEAD operation + metadata) – no body download
+            ObjectMetadata objectMetadata = getConnection(bucketName)
+                    .getObjectMetadata(bucketName, finalObjectName);
 
             if (objectMetadata != null && objectMetadata.getUserMetadata() != null) {
-                for (Entry<String, String> entry : objectMetadata.getUserMetadata().entrySet()) {
-                    metaData.put(entry.getKey(), entry.getValue());
-                }
+                objectMetadata.getUserMetadata().forEach((key, value) ->
+                        metadataResult.put(key, value));
             }
 
-            return metaData;
-        } catch (Exception e) {
-            connection = null;
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        } finally {
-            if (s3Object != null) {
-                try {
-                    s3Object.close();
-                } catch (IOException e) {
-                    LOGGER.error(SESSIONID, REGISTRATIONID, "Error closing S3Object",
-                            ExceptionUtils.getStackTrace(e));
-                }
+            long endTime = System.currentTimeMillis();
+            LOGGER.info(SESSIONID, REGISTRATIONID,
+                    "getMetaData completed successfully in {} ms | metadata keys: {} | object: {}",
+                    (endTime - startTime), metadataResult.keySet(), finalObjectName);
+
+            return metadataResult;
+
+        } catch (AmazonS3Exception e) {
+            if (e.getStatusCode() == 404) {
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "Object not found in S3: bucket={}, key={}", bucketName, finalObjectName);
+                return metadataResult; // return empty map (consistent with "no metadata")
             }
+
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "S3 error fetching metadata | bucket: {} | key: {} | status: {}",
+                    bucketName, finalObjectName, e.getStatusCode(), e);
+
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+
+        } catch (Exception e) {
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Unexpected error in getMetaData | bucket: {} | key: {} after {} ms",
+                    bucketName, finalObjectName, (System.currentTimeMillis() - startTime), e);
+
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
     }
-
     @Override
     public Integer incMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
         try {
@@ -391,47 +408,58 @@ public class S3Adapter implements ObjectStoreAdapter {
      */
     private AmazonS3 getConnection(String bucketName) {
         if (connection != null) {
+            LOGGER.info(SESSIONID, REGISTRATIONID, "Reusing existing S3 connection");
             return connection;
         }
 
-        try {
-            AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
-            ClientConfiguration clientConfig = new ClientConfiguration()
-                    .withConnectionTimeout(connectionTimeout)
-                    .withSocketTimeout(socketTimeout)
-                    .withClientExecutionTimeout(clientExecutionTimeout)
-                    .withMaxConnections(maxConnection)
-                    .withMaxErrorRetry(maxRetry)
-                    .withTcpKeepAlive(true);
+        int attempt = 0;
+        while (attempt < maxRetry) {
+            attempt++;
+            try {
+                AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
+                ClientConfiguration clientConfig = new ClientConfiguration()
+                        .withConnectionTimeout(connectionTimeout)
+                        .withSocketTimeout(socketTimeout)
+                        .withClientExecutionTimeout(clientExecutionTimeout)
+                        .withMaxConnections(maxConnection)
+                        .withMaxErrorRetry(maxRetry);
 
-            connection = AmazonS3ClientBuilder.standard()
-                    .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
-                    .enablePathStyleAccess()
-                    .withClientConfiguration(clientConfig)
-                    .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region))
-                    .build();
+                connection = AmazonS3ClientBuilder.standard()
+                        .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
+                        .enablePathStyleAccess()
+                        .withClientConfiguration(clientConfig)
+                        .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region))
+                        .build();
 
-            connection.doesBucketExistV2(bucketName);
-            retry = 0;
-        } catch (Exception e) {
-            if (retry >= maxRetry) {
-                retry = 0;
-                connection = null;
-                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-            } else {
-                connection = null;
-                retry = retry + 1;
-                long backoffTime = (long) Math.pow(2, retry) * 100;
+                // Verify connection works
+                connection.doesBucketExistV2(bucketName);
+
+                LOGGER.info(SESSIONID, REGISTRATIONID,
+                        "New S3 connection created successfully after {} attempts", attempt);
+                return connection;
+
+            } catch (Exception e) {
+                LOGGER.warn(SESSIONID, REGISTRATIONID,
+                        "S3 connection attempt {} failed for bucket {}. Retrying...", attempt, bucketName, e);
+
+                if (attempt >= maxRetry) {
+                    LOGGER.error(SESSIONID, REGISTRATIONID,
+                            "Max retries ({}) reached. Giving up on S3 connection.", maxRetry);
+                    throw new ObjectStoreAdapterException(
+                            OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                            "Failed to create S3 connection after " + maxRetry + " attempts", e);
+                }
+
                 try {
-                    Thread.sleep(Math.min(backoffTime, 10000));
+                    Thread.sleep(300 + attempt * 200); // simple exponential backoff ~300–~4s
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
-                return getConnection(bucketName);
             }
         }
-        return connection;
+
+        throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                "Unexpected exit from connection retry loop");
     }
 
     public List<ObjectDto> getAllObjects(String account, String id) {
