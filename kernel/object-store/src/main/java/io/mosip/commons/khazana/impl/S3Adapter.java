@@ -266,6 +266,7 @@ public class S3Adapter implements ObjectStoreAdapter {
         return addObjectMetaData(account, container, source, process, finalObjectName, meta);
     }
 
+    @Override
     public Map<String, Object> getMetaData(String account, String container, String source, String process,
                                            String objectName) {
         long startTime = System.currentTimeMillis();
