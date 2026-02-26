@@ -1,59 +1,41 @@
 package io.mosip.commons.khazana.util;
 
 import com.amazonaws.services.s3.model.S3Object;
-import io.mosip.commons.khazana.config.LoggerConfiguration;
-import io.mosip.kernel.core.logger.spi.Logger;
 
 import java.io.IOException;
 import java.io.InputStream;
 
-import static io.mosip.commons.khazana.config.LoggerConfiguration.REGISTRATIONID;
-import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
-
 /**
  * Wrapper class for S3ObjectInputStream to ensure proper resource cleanup
  * and prevent "Not all bytes were read from the S3ObjectInputStream" warnings.
-
- * This class:
- * - Tracks if the stream has been fully read
- * - Ensures the S3Object is properly closed
- * - Prevents connection leaks
- * - Provides content-length information
  */
 public class SafeS3InputStream extends InputStream {
 
-    private static final Logger LOGGER = LoggerConfiguration.logConfig(SafeS3InputStream.class);
+    private static final int DRAIN_BUFFER_SIZE = 8192;
 
     private final S3Object s3Object;
     private final InputStream delegateStream;
     private final long contentLength;
     private long bytesRead = 0;
-    private boolean closed = false;
+    private boolean fullyClosed = false;
 
     public SafeS3InputStream(S3Object s3Object, long contentLength) {
         this.s3Object = s3Object;
         this.delegateStream = s3Object.getObjectContent();
         this.contentLength = contentLength;
-        LOGGER.info(SESSIONID, REGISTRATIONID, "SafeS3InputStream created with contentLength: " + contentLength);
     }
 
     @Override
     public int read() throws IOException {
-        if (closed) {
-            throw new IOException("Stream is closed");
-        }
-        int byte_value = delegateStream.read();
-        if (byte_value != -1) {
+        int byteValue = delegateStream.read();
+        if (byteValue != -1) {
             bytesRead++;
         }
-        return byte_value;
+        return byteValue;
     }
 
     @Override
     public int read(byte[] b) throws IOException {
-        if (closed) {
-            throw new IOException("Stream is closed");
-        }
         int bytesReadFromStream = delegateStream.read(b);
         if (bytesReadFromStream > 0) {
             bytesRead += bytesReadFromStream;
@@ -63,9 +45,6 @@ public class SafeS3InputStream extends InputStream {
 
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
-        if (closed) {
-            throw new IOException("Stream is closed");
-        }
         int bytesReadFromStream = delegateStream.read(b, off, len);
         if (bytesReadFromStream > 0) {
             bytesRead += bytesReadFromStream;
@@ -75,9 +54,6 @@ public class SafeS3InputStream extends InputStream {
 
     @Override
     public long skip(long n) throws IOException {
-        if (closed) {
-            throw new IOException("Stream is closed");
-        }
         long skipped = delegateStream.skip(n);
         bytesRead += skipped;
         return skipped;
@@ -85,37 +61,72 @@ public class SafeS3InputStream extends InputStream {
 
     @Override
     public int available() throws IOException {
-        if (closed) {
+        try {
+            return delegateStream.available();
+        } catch (IOException e) {
             return 0;
         }
-        return delegateStream.available();
+    }
+
+    /**
+     * Drain the remaining bytes from the stream
+     */
+    private void drainStream() {
+        if (contentLength > 0 && bytesRead < contentLength) {
+            byte[] buffer = new byte[DRAIN_BUFFER_SIZE];
+            int bytesReadFromStream;
+            long remainingBytes = contentLength - bytesRead;
+            long drainedBytes = 0;
+
+            try {
+                while (drainedBytes < remainingBytes && (bytesReadFromStream = delegateStream.read(buffer)) != -1) {
+                    drainedBytes += bytesReadFromStream;
+                }
+            } catch (IOException e) {
+                // Silently ignore during drain
+            }
+        }
     }
 
     @Override
     public void close() throws IOException {
-        if (!closed) {
-            closed = true;
+        if (fullyClosed) {
+            return;
+        }
+
+        fullyClosed = true;
+        IOException closingException = null;
+
+        try {
+            drainStream();
+        } catch (Exception e) {
+            if (e instanceof IOException) {
+                closingException = (IOException) e;
+            }
+        } finally {
             try {
-                // Ensure full consumption or explicit drain
-                if (contentLength > 0 && bytesRead < contentLength) {
-                    LOGGER.info(SESSIONID, REGISTRATIONID, "SafeS3InputStream - draining remaining bytes. Expected: " +
-                            contentLength + ", Read: " + bytesRead);
-                    byte[] buffer = new byte[8192];
-                    int bytesReadFromStream;
-                    while ((bytesReadFromStream = delegateStream.read(buffer)) != -1) {
-                        bytesRead += bytesReadFromStream;
-                    }
+                if (delegateStream != null) {
+                    delegateStream.close();
                 }
-                delegateStream.close();
-                LOGGER.info(SESSIONID, REGISTRATIONID, "SafeS3InputStream - delegate stream closed. Total bytes read: " + bytesRead);
+            } catch (IOException e) {
+                if (closingException == null) {
+                    closingException = e;
+                }
             } finally {
                 try {
-                    s3Object.close();
-                    LOGGER.info(SESSIONID, REGISTRATIONID, "SafeS3InputStream - S3Object closed successfully");
+                    if (s3Object != null) {
+                        s3Object.close();
+                    }
                 } catch (IOException e) {
-                    LOGGER.error(SESSIONID, REGISTRATIONID, "Error closing S3Object", e);
+                    if (closingException == null) {
+                        closingException = e;
+                    }
                 }
             }
+        }
+
+        if (closingException != null) {
+            throw closingException;
         }
     }
 
@@ -144,5 +155,9 @@ public class SafeS3InputStream extends InputStream {
 
     public boolean isFullyRead() {
         return contentLength == -1 || bytesRead >= contentLength;
+    }
+
+    public boolean isClosed() {
+        return fullyClosed;
     }
 }
