@@ -19,6 +19,7 @@ import java.util.Map.Entry;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -46,7 +47,7 @@ import io.mosip.kernel.core.logger.spi.Logger;
 
 @Service
 @Qualifier("S3Adapter")
-public class S3Adapter implements ObjectStoreAdapter {
+public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     private final Logger LOGGER = LoggerConfiguration.logConfig(S3Adapter.class);
 
@@ -96,6 +97,31 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 	private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
 
+    /**
+     * Shuts down the S3 client and clears the connection reference to prevent connection leaks.
+     * The AmazonS3 client holds an HTTP connection pool; without shutdown() those connections are never released.
+     */
+    private void shutdownConnection() {
+        if (connection != null) {
+            try {
+                connection.shutdown();
+            } catch (Exception e) {
+                LOGGER.warn(SESSIONID, REGISTRATIONID, "Error shutting down S3 connection", ExceptionUtils.getStackTrace(e));
+            } finally {
+                connection = null;
+            }
+        }
+    }
+
+    /**
+     * Shutdown S3 client when the adapter bean is destroyed (e.g. application shutdown or context refresh).
+     * Without this, the connection pool is never released in the normal "no error" path, causing a connection leak.
+     */
+    @Override
+    public void destroy() {
+        shutdownConnection();
+    }
+
     @Override
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
     	 String finalObjectName=null;
@@ -121,7 +147,7 @@ public class S3Adapter implements ObjectStoreAdapter {
                 return bis;
             }
         } catch (Exception e) {
-            connection = null;
+            shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured to getObject for : " + container, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         } finally {
@@ -209,7 +235,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             getConnection(bucketName).putObject(putObjectRequest);
             return metadata;
         } catch (Exception e) {
-            connection = null;
+            shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to addObjectMetaData for : " + container, ExceptionUtils.getStackTrace(e));
             metadata = null;
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -258,23 +284,14 @@ public class S3Adapter implements ObjectStoreAdapter {
 			// As per AmazonS3 bucket naming rules,name contains only lower case letters
 			bucketName = bucketName.toLowerCase();
             Map<String, Object> metaData = new HashMap<>();
-
-            s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
-            ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
+            ObjectMetadata objectMetadata = getConnection(bucketName).getObjectMetadata(bucketName, finalObjectName);
             if (objectMetadata != null && objectMetadata.getUserMetadata() != null)
                 objectMetadata.getUserMetadata().entrySet().forEach(entry -> metaData.put(entry.getKey(), entry.getValue()));
             return metaData;
         } catch (Exception e) {
-            connection = null;
+            shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to getMetaData for : " + container, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-        } finally {
-            try {
-                if (s3Object != null)
-                    s3Object.close();
-            } catch (IOException e) {
-                LOGGER.error(SESSIONID, REGISTRATIONID,"IO occured : " + container, ExceptionUtils.getStackTrace(e));
-            }
         }
     }
 
@@ -376,11 +393,11 @@ public class S3Adapter implements ObjectStoreAdapter {
             if (retry >= maxRetry) {
                 // reset the connection and retry count
                 retry = 0;
-                connection = null;
+                shutdownConnection();
                 LOGGER.error(SESSIONID, REGISTRATIONID,"Maximum retry limit exceeded. Could not obtain connection for "+ bucketName +". Retry count :" + retry, ExceptionUtils.getStackTrace(e));
                 throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
             } else {
-                connection = null;
+                shutdownConnection();
                 retry = retry + 1;
                 LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured while obtaining connection for "+ bucketName +". Will try again. Retry count : " + retry, ExceptionUtils.getStackTrace(e));
                 getConnection(bucketName);
@@ -477,47 +494,48 @@ public class S3Adapter implements ObjectStoreAdapter {
                 if (useAccountAsBucketname)
                     existingBuckets.add(bucketName);
             }
-			for(Entry<String, String> entry:tags.entrySet()) {
-				String tagName=null;
-				InputStream data=IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8);
-				 tagName=ObjectStoreUtil.getName(finalObjectName, entry.getKey());
-					try {
-						connection.putObject(bucketName, tagName, data, null);
-					} catch (Exception e) {
-						// this check is introduced to support backward compatibility
-						if (e instanceof AmazonS3Exception && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
-								|| e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
-							if (connection.doesObjectExist(bucketName, finalObjectName)) {
-								connection.deleteObject(bucketName, finalObjectName);
-								addTags(account, container, tags);
-							} else {
-								connection = null;
-								LOGGER.error(SESSIONID, REGISTRATIONID,
-										"Exception occured while addTags for : " + container,
-										ExceptionUtils.getStackTrace(e));
-								throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-										OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-							}
-						  }else {
-							  connection = null;
-				                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
-				                        ExceptionUtils.getStackTrace(e));
-				                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-				                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-						  }
-					}
-			}
+            for(Entry<String, String> entry:tags.entrySet()) {
+                String tagName=null;
+                try (InputStream data = IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8)) {
+                    tagName=ObjectStoreUtil.getName(finalObjectName, entry.getKey());
+                    try {
+                        connection.putObject(bucketName, tagName, data, null);
+                    } catch (Exception e) {
+                        // this check is introduced to support backward compatibility
+                        if (e instanceof AmazonS3Exception && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
+                                || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
+                            if (connection.doesObjectExist(bucketName, finalObjectName)) {
+                                connection.deleteObject(bucketName, finalObjectName);
+                                addTags(account, container, tags);
+                            } else {
+                                shutdownConnection();
+                                LOGGER.error(SESSIONID, REGISTRATIONID,
+                                        "Exception occured while addTags for : " + container,
+                                        ExceptionUtils.getStackTrace(e));
+                                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+                            }
+                        }else {
+                            shutdownConnection();
+                            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+                                    ExceptionUtils.getStackTrace(e));
+                            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+                        }
+                    }
+                }
+            }
 
 
-		} catch (Exception e) {
-                connection = null;
-                LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
-                        ExceptionUtils.getStackTrace(e));
-                throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                        OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-		}
-		return tags;
-	}
+        } catch (Exception e) {
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container,
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
+        return tags;
+    }
 
 	@Override
 	public Map<String, String> getTags(String account, String container) {
@@ -569,12 +587,13 @@ public class S3Adapter implements ObjectStoreAdapter {
 
 		return objectTags;
 
-		}catch(Exception e){
-			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while getTags for : " + container,
-					ExceptionUtils.getStackTrace(e));
-			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-		}
+        }catch(Exception e){
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while getTags for : " + container,
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
 
 	}
 
@@ -605,13 +624,13 @@ public class S3Adapter implements ObjectStoreAdapter {
 				connection.deleteObject(bucketName, tagName);
 			}
 
-		} catch (Exception e) {
-            connection = null;
-			LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while deleteTags for : " + container,
-					ExceptionUtils.getStackTrace(e));
-			throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-					OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
-		}
+        } catch (Exception e) {
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while deleteTags for : " + container,
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
 
 	}
 
