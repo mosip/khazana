@@ -84,8 +84,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 	@Value("${object.store.s3.bucket-name-prefix:}")
 	private String bucketNamePrefix;
 
-    private int retry = 0;
-
     private List<String> existingBuckets = new ArrayList<>();
 
     private AmazonS3 connection = null;
@@ -396,8 +394,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
                 // Test connection once before returning it
                 connection.doesBucketExistV2(bucketName);
-                // Reset retry counter after every successful connection
-                retry = 0;
                 return connection;
 
             } catch (Exception e) {
@@ -408,7 +404,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         ExceptionUtils.getStackTrace(e));
 
                 if (attempt >= maxRetry) {
-                    retry = 0;
                     LOGGER.error(SESSIONID, REGISTRATIONID,
                             "Maximum retry limit exceeded. Could not obtain connection for " + bucketName
                                     + ". Retry count :" + attempt);
