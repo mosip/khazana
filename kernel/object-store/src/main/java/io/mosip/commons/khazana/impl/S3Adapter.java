@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.mosip.commons.khazana.util.SafeS3InputStream;
 import org.apache.commons.io.IOUtils;
@@ -95,6 +96,14 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     private volatile AmazonS3 connection = null;
 
     /**
+     * ReentrantLock instead of synchronized: virtual threads blocked on a ReentrantLock
+     * can unmount from their carrier thread while waiting, unlike synchronized blocks
+     * which pin the virtual thread to the carrier thread and prevent other virtual threads
+     * from running on it — causing severe throughput degradation under high concurrency.
+     */
+    private final ReentrantLock connectionLock = new ReentrantLock();
+
+    /**
      * ConcurrentHashMap-backed Set for O(1) thread-safe contains/add.
      * Tracks which buckets are confirmed to exist so we avoid a doesBucketExistV2()
      * S3 API call on every write operation.
@@ -109,17 +118,22 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     /**
      * Shuts down the S3 client and clears the connection reference to prevent connection leaks.
-     * The AmazonS3 client holds an HTTP connection pool; without shutdown() those connections are never released.
+     * Uses ReentrantLock so virtual threads can unmount while waiting (unlike synchronized).
      */
-    private synchronized void shutdownConnection() {
-        if (connection != null) {
-            try {
-                connection.shutdown();
-            } catch (Exception e) {
-                LOGGER.warn(SESSIONID, REGISTRATIONID, "Error shutting down S3 connection", ExceptionUtils.getStackTrace(e));
-            } finally {
-                connection = null;
+    private void shutdownConnection() {
+        connectionLock.lock();
+        try {
+            if (connection != null) {
+                try {
+                    connection.shutdown();
+                } catch (Exception e) {
+                    LOGGER.warn(SESSIONID, REGISTRATIONID, "Error shutting down S3 connection", ExceptionUtils.getStackTrace(e));
+                } finally {
+                    connection = null;
+                }
             }
+        } finally {
+            connectionLock.unlock();
         }
     }
 
@@ -354,18 +368,16 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     /**
-     * Double-checked locking with volatile for thread-safe singleton connection.
-     *
-     * Without synchronized + volatile:
-     *   - N threads all see connection==null simultaneously
-     *   - N threads all create new AmazonS3 clients (each with its own HTTP pool)
-     *   - N-1 clients are orphaned → leaked connections → S3 overloaded
+     * Double-checked locking with ReentrantLock for thread-safe singleton connection.
+     * ReentrantLock is used instead of synchronized so virtual threads can unmount
+     * while waiting for the lock — synchronized would pin them to carrier threads.
      */
     private AmazonS3 getConnection(String bucketName) {
         if (connection != null)
             return connection;
 
-        synchronized (this) {
+        connectionLock.lock();
+        try {
             if (connection != null)
                 return connection;
 
@@ -411,6 +423,8 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage());
+        } finally {
+            connectionLock.unlock();
         }
     }
 
