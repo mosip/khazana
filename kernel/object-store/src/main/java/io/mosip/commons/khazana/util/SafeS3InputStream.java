@@ -10,12 +10,24 @@ import java.io.InputStream;
 /**
  * Wrapper class for S3ObjectInputStream to ensure proper resource cleanup
  * and prevent "Not all bytes were read from the S3ObjectInputStream" warnings.
+ *
+ * Under high load, draining large objects ties up the HTTP connection and causes
+ * latency spikes. When more than DRAIN_THRESHOLD_BYTES remain, the underlying
+ * connection is aborted (removed from pool) rather than drained — trading one
+ * pool slot for a significant reduction in network I/O and response time.
  */
 public class SafeS3InputStream extends InputStream {
 
     private static final int DRAIN_BUFFER_SIZE = 8192;
 
     private static final long MAX_DRAIN_BYTES = 10 * 1024 * 1024; // safety cap: 10 MB
+
+    /**
+     * If more than this many bytes remain when close() is called, abort the HTTP
+     * connection instead of draining. 256 KB keeps drain time bounded to ~1-2ms
+     * even on a slow link; anything larger is cheaper to abort.
+     */
+    private static final long DRAIN_THRESHOLD_BYTES = 256 * 1024L; // 256 KB
 
     private final S3Object s3Object;
     private final InputStream delegateStream;
@@ -74,26 +86,6 @@ public class SafeS3InputStream extends InputStream {
         }
     }
 
-    /**
-     * Drain the remaining bytes from the stream
-     */
-    private void drainStream() {
-        if (contentLength > 0 && bytesRead < contentLength) {
-            byte[] buffer = new byte[DRAIN_BUFFER_SIZE];
-            int bytesReadFromStream;
-            long remainingBytes = contentLength - bytesRead;
-            long drainedBytes = 0;
-
-            try {
-                while (drainedBytes < remainingBytes && (bytesReadFromStream = delegateStream.read(buffer)) != -1) {
-                    drainedBytes += bytesReadFromStream;
-                }
-            } catch (IOException e) {
-                // Silently ignore during drain
-            }
-        }
-    }
-
     @Override
     public void close() throws IOException {
         if (fullyClosed) {
@@ -102,38 +94,49 @@ public class SafeS3InputStream extends InputStream {
         fullyClosed = true;
 
         try {
-            // Always attempt to drain — even if contentLength == -1 or bytesRead >= contentLength
-            // This is the most reliable way to suppress the warning
-            if (!isFullyRead() || contentLength <= 0) {  // also drain if length unknown
-                LOGGER.debug("SafeS3InputStream - draining to prevent AWS warning. Known length: {}, bytesRead: {}",
-                        contentLength, bytesRead);
+            if (isFullyRead()) {
+                // Stream was fully consumed — no drain needed, return connection to pool cleanly
+                LOGGER.debug("SafeS3InputStream - fully consumed ({}/{} bytes), closing normally", bytesRead, contentLength);
+                delegateStream.close();
+                return;
+            }
 
+            long remaining = contentLength > 0 ? contentLength - bytesRead : Long.MAX_VALUE;
+
+            if (remaining > DRAIN_THRESHOLD_BYTES) {
+                // Large remainder — abort the HTTP connection rather than draining over the network.
+                // Under high load, draining N×256KB+ per thread spikes latency and holds connections
+                // hostage. Aborting costs one pool slot but keeps response times stable.
+                LOGGER.debug("SafeS3InputStream - aborting: {}B remaining exceeds {}B drain threshold",
+                        remaining == Long.MAX_VALUE ? "unknown" : remaining, DRAIN_THRESHOLD_BYTES);
+                try {
+                    s3Object.getObjectContent().abort();
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to abort S3ObjectInputStream", e);
+                }
+            } else {
+                // Small remainder — drain to return the HTTP connection to the pool cleanly
+                LOGGER.debug("SafeS3InputStream - draining small remainder (~{}B) to reuse connection", remaining);
                 byte[] buffer = new byte[DRAIN_BUFFER_SIZE];
                 long drained = 0;
                 int readBytes;
-
                 while ((readBytes = delegateStream.read(buffer)) != -1) {
                     drained += readBytes;
                     bytesRead += readBytes;
-
-                    // Safety: prevent infinite loop or huge objects from hanging
                     if (drained > MAX_DRAIN_BYTES) {
-                        LOGGER.warn( "Drain exceeded safety limit of {} bytes - aborting drain", MAX_DRAIN_BYTES);
-                        break;
+                        // Shouldn't happen since remaining <= DRAIN_THRESHOLD_BYTES, but guard anyway
+                        LOGGER.warn("Drain exceeded safety limit — aborting");
+                        s3Object.getObjectContent().abort();
+                        return;
                     }
                 }
-                LOGGER.debug("Drained {} additional bytes. Total read now: {}", drained, bytesRead);
-            } else {
-                LOGGER.debug("Stream fully consumed ({}/{} bytes) - no drain needed", bytesRead, contentLength);
+                delegateStream.close();
             }
-
-            delegateStream.close();
         } catch (IOException e) {
             LOGGER.warn("Exception during drain/close of delegate stream", e);
         } finally {
             try {
                 s3Object.close();
-                LOGGER.debug( "S3Object closed");
             } catch (IOException e) {
                 LOGGER.error("Failed to close S3Object", e);
             }
