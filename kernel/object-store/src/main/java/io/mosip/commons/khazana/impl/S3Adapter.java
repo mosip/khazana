@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.mosip.commons.khazana.util.SafeS3InputStream;
@@ -70,16 +71,34 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     @Value("${object.store.connection.max.retry:20}")
     private int maxRetry;
 
+    /**
+     * Max SDK-level retries per S3 API call (separate from connection establishment retries).
+     * Keep this LOW (default 3). Under high load S3 returns 503 SlowDown; aggressive retries
+     * cause exponential backoff storms that spike response times to clientExecutionTimeout (15s).
+     * The connection establishment retry loop (maxRetry) is separate and can stay high.
+     */
+    @Value("${object.store.sdk.max.error.retry:3}")
+    private int sdkMaxErrorRetry;
+
     @Value("${object.store.max.connection:200}")
     private int maxConnection;
 
     @Value("${object.store.connection.timeout:5000}")
     private int connectionTimeout;
 
-    @Value("${object.store.socket.timeout:10000}")
+    /**
+     * Socket (read) timeout per TCP read. Keep below 10s so a stalled S3 connection
+     * doesn't tie up a virtual thread for a full clientExecutionTimeout period.
+     */
+    @Value("${object.store.socket.timeout:8000}")
     private int socketTimeout;
 
-    @Value("${object.store.client.execution.timeout:15000}")
+    /**
+     * Total request budget including retries. With sdkMaxErrorRetry=3 and socketTimeout=8s:
+     * worst case ≈ 3 × 8s = 24s, so this cap must be smaller to enforce the budget.
+     * Default 10s keeps spikes below the typical 25s upstream timeout.
+     */
+    @Value("${object.store.client.execution.timeout:10000}")
     private int clientExecutionTimeout;
 
     @Value("${object.store.s3.use.account.as.bucketname:false}")
@@ -130,6 +149,8 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     LOGGER.warn(SESSIONID, REGISTRATIONID, "Error shutting down S3 connection", ExceptionUtils.getStackTrace(e));
                 } finally {
                     connection = null;
+                    // Clear bucket cache — after a reconnect the previous state may be stale
+                    existingBuckets.clear();
                 }
             }
         } finally {
@@ -218,7 +239,16 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         AmazonS3 client = getConnection(bucketName);
         try {
             ensureBucketExists(client, bucketName);
-            client.putObject(bucketName, finalObjectName, data, new ObjectMetadata());
+            // Set content-length when the stream can report it (e.g. ByteArrayInputStream).
+            // Without it the AWS SDK v1 buffers the ENTIRE stream in memory before upload,
+            // causing memory spikes proportional to object size × concurrent threads.
+            ObjectMetadata meta = new ObjectMetadata();
+            try {
+                int available = data.available();
+                if (available > 0)
+                    meta.setContentLength(available);
+            } catch (Exception ignored) {}
+            client.putObject(bucketName, finalObjectName, data, meta);
             return true;
         } catch (AmazonS3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID, "S3 error in putObject for: " + objectName + " | status: " + e.getStatusCode(), ExceptionUtils.getStackTrace(e));
@@ -243,16 +273,19 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         }
         bucketName = normalizeBucket(bucketName);
         try {
+            // Capture a single client reference — calling getConnection() twice risks using
+            // two different instances if a reconnect occurs between the HEAD and COPY calls.
+            AmazonS3 client = getConnection(bucketName);
             ObjectMetadata objectMetadata = new ObjectMetadata();
             // Fetch only the metadata header (HEAD request, no content download) then merge with new metadata
-            ObjectMetadata existingMetadata = getConnection(bucketName).getObjectMetadata(bucketName, finalObjectName);
+            ObjectMetadata existingMetadata = client.getObjectMetadata(bucketName, finalObjectName);
             if (existingMetadata != null && existingMetadata.getUserMetadata() != null)
                 existingMetadata.getUserMetadata().forEach((k, v) -> objectMetadata.addUserMetadata(k, v));
             metadata.forEach((k, v) -> objectMetadata.addUserMetadata(k, v != null ? v.toString() : null));
             // Server-side copy with new metadata — no content is transferred to/from the client
             CopyObjectRequest copyRequest = new CopyObjectRequest(bucketName, finalObjectName, bucketName, finalObjectName)
                     .withNewObjectMetadata(objectMetadata);
-            getConnection(bucketName).copyObject(copyRequest);
+            client.copyObject(copyRequest);
             return metadata;
         } catch (AmazonS3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID, "S3 error in addObjectMetaData for: " + objectName + " | status: " + e.getStatusCode(), ExceptionUtils.getStackTrace(e));
@@ -309,6 +342,13 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         }
     }
 
+    /**
+     * WARNING — NOT safe under concurrent access at high RPS.
+     * S3 has no atomic increment. Two threads reading the same value simultaneously
+     * will both write n+1, silently losing one increment. Callers must ensure
+     * only one thread increments a given key at a time (e.g. via external locking
+     * or by ensuring single-writer per objectName at the application level).
+     */
     @Override
     public Integer incMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
         Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
@@ -321,6 +361,9 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         return null;
     }
 
+    /**
+     * WARNING — NOT safe under concurrent access at high RPS. See incMetadata.
+     */
     @Override
     public Integer decMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
         Map<String, Object> metadata = getMetaData(account, container, source, process, objectName);
@@ -391,7 +434,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                             .withSocketTimeout(socketTimeout)
                             .withClientExecutionTimeout(clientExecutionTimeout)
                             .withMaxConnections(maxConnection)
-                            .withMaxErrorRetry(maxRetry);
+                            .withMaxErrorRetry(sdkMaxErrorRetry);
 
                     connection = AmazonS3ClientBuilder.standard()
                             .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
@@ -418,6 +461,20 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                                 OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
                     }
+
+                    // Exponential backoff with jitter: 200ms, 400ms, 800ms … capped at 5s.
+                    // Without backoff, 200 concurrent threads each retry 20× immediately,
+                    // storming S3 with 4000 rapid connection attempts and triggering 503 SlowDown
+                    // which causes SDK retries that double response times.
+                    try {
+                        long backoffMs = Math.min(200L * (1L << (attempt - 1)), 5000L);
+                        backoffMs += ThreadLocalRandom.current().nextLong(100); // jitter
+                        Thread.sleep(backoffMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                                OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), ie);
+                    }
                 }
             }
 
@@ -429,16 +486,19 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     public List<ObjectDto> getAllObjects(String account, String id) {
-        List<S3ObjectSummary> os = new ArrayList<>();
+        // Process each page immediately instead of accumulating all summaries.
+        // Collecting all pages first (old approach) holds every S3ObjectSummary in heap
+        // simultaneously: 1M objects × ~300B = ~300 MB per concurrent call at 400 RPS.
+        List<ObjectDto> objectDtos = new ArrayList<>();
+
         if (useAccountAsBucketname) {
             String searchPattern = id + SEPARATOR;
             account = normalizeBucket(account);
-            // listObjectsV2 with pagination to avoid silent 1000-object truncation
             ListObjectsV2Request request = new ListObjectsV2Request().withBucketName(account).withPrefix(searchPattern);
             ListObjectsV2Result result;
             do {
                 result = getConnection(account).listObjectsV2(request);
-                os.addAll(result.getObjectSummaries());
+                collectObjectDtos(result.getObjectSummaries(), objectDtos);
                 request.setContinuationToken(result.getNextContinuationToken());
             } while (result.isTruncated());
         } else {
@@ -447,45 +507,40 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             ListObjectsV2Result result;
             do {
                 result = getConnection(id).listObjectsV2(request);
-                os.addAll(result.getObjectSummaries());
+                collectObjectDtos(result.getObjectSummaries(), objectDtos);
                 request.setContinuationToken(result.getNextContinuationToken());
             } while (result.isTruncated());
         }
 
-        if (!os.isEmpty()) {
-            List<ObjectDto> objectDtos = new ArrayList<>();
-            os.forEach(o -> {
-                String[] tempKeys = o.getKey().split("/");
-                if (useAccountAsBucketname) {
-                    if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
-                        tempKeys = null;
-                } else {
-                    if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
-                        tempKeys = null;
-                }
+        return objectDtos.isEmpty() ? null : objectDtos;
+    }
 
-                String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
-                if (ArrayUtils.isNotEmpty(keys)) {
-                    ObjectDto objectDto = null;
-                    switch (keys.length) {
-                        case 1:
-                            objectDto = new ObjectDto(null, null, keys[0], o.getLastModified());
-                            break;
-                        case 2:
-                            objectDto = new ObjectDto(keys[0], null, keys[1], o.getLastModified());
-                            break;
-                        case 3:
-                            objectDto = new ObjectDto(keys[0], keys[1], keys[2], o.getLastModified());
-                            break;
-                    }
-                    if (objectDto != null)
-                        objectDtos.add(objectDto);
+    /**
+     * Converts one page of S3ObjectSummaries into ObjectDtos and appends them.
+     * Called per page so the previous page's summaries are GC-eligible immediately.
+     */
+    private void collectObjectDtos(List<S3ObjectSummary> summaries, List<ObjectDto> objectDtos) {
+        for (S3ObjectSummary o : summaries) {
+            String[] tempKeys = o.getKey().split("/");
+            if (useAccountAsBucketname) {
+                if (tempKeys.length > 1 && tempKeys[1] != null && tempKeys[1].endsWith(TAGS_FILENAME))
+                    continue;
+            } else {
+                if (tempKeys.length > 0 && tempKeys[0] != null && tempKeys[0].endsWith(TAGS_FILENAME))
+                    continue;
+            }
+            String[] keys = removeIdFromObjectPath(useAccountAsBucketname, tempKeys);
+            if (ArrayUtils.isNotEmpty(keys)) {
+                ObjectDto objectDto = null;
+                switch (keys.length) {
+                    case 1: objectDto = new ObjectDto(null, null, keys[0], o.getLastModified()); break;
+                    case 2: objectDto = new ObjectDto(keys[0], null, keys[1], o.getLastModified()); break;
+                    case 3: objectDto = new ObjectDto(keys[0], keys[1], keys[2], o.getLastModified()); break;
                 }
-            });
-            return objectDtos;
+                if (objectDto != null)
+                    objectDtos.add(objectDto);
+            }
         }
-
-        return null;
     }
 
     private String[] removeIdFromObjectPath(boolean useAccountAsBucketname, String[] keys) {
@@ -495,6 +550,15 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     @Override
     public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
+        return addTagsInternal(account, container, tags, false);
+    }
+
+    /**
+     * @param backwardCompatRetry true if this is the single allowed retry after deleting a
+     *                            legacy prefix object. Prevents unbounded recursion at 400 RPS
+     *                            if the backward-compat condition keeps recurring.
+     */
+    private Map<String, String> addTagsInternal(String account, String container, Map<String, String> tags, boolean backwardCompatRetry) {
         String bucketName;
         String finalObjectName;
         if (useAccountAsBucketname) {
@@ -510,25 +574,33 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             ensureBucketExists(client, bucketName);
             for (Entry<String, String> entry : tags.entrySet()) {
                 String tagName = ObjectStoreUtil.getName(finalObjectName, entry.getKey());
+                byte[] tagBytes = entry.getValue().getBytes(StandardCharsets.UTF_8);
                 try (InputStream data = IOUtils.toInputStream(entry.getValue(), StandardCharsets.UTF_8)) {
                     try {
-                        client.putObject(bucketName, tagName, data, new ObjectMetadata());
+                        // Set content-length so the SDK streams directly without buffering.
+                        // Tag values are small strings, so tagBytes.length is exact and safe.
+                        ObjectMetadata meta = new ObjectMetadata();
+                        meta.setContentLength(tagBytes.length);
+                        client.putObject(bucketName, tagName, data, meta);
                     } catch (AmazonS3Exception e) {
-                        if (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
-                                || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR)) {
+                        if (!backwardCompatRetry
+                                && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
+                                    || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
                             if (client.doesObjectExist(bucketName, finalObjectName)) {
                                 client.deleteObject(bucketName, finalObjectName);
-                                return addTags(account, container, tags);
+                                // Retry the full set once after cleaning up the legacy object.
+                                // backwardCompatRetry=true prevents a second recursion if the
+                                // same error recurs (would indicate a permissions issue, not legacy data).
+                                return addTagsInternal(account, container, tags, true);
                             }
                         }
-                        // S3 error — connection healthy, re-throw without resetting
                         LOGGER.error(SESSIONID, REGISTRATIONID, "S3 error in addTags for: " + container + " | status: " + e.getStatusCode(), ExceptionUtils.getStackTrace(e));
                         throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
                     }
                 }
             }
         } catch (ObjectStoreAdapterException e) {
-            throw e; // already handled above
+            throw e;
         } catch (Exception e) {
             shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Unexpected error in addTags for: " + container, ExceptionUtils.getStackTrace(e));
@@ -539,7 +611,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     @Override
     public Map<String, String> getTags(String account, String container) {
-        Map<String, String> objectTags = new ConcurrentHashMap<>();
+        Map<String, String> objectTags = new HashMap<>();
         String bucketName;
         String finalObjectName;
         if (useAccountAsBucketname) {
@@ -553,14 +625,22 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
         try {
             AmazonS3 client = getConnection(bucketName);
-            List<S3ObjectSummary> objectSummary;
-            if (useAccountAsBucketname)
-                objectSummary = client.listObjects(bucketName, finalObjectName).getObjectSummaries();
-            else
-                objectSummary = client.listObjects(bucketName).getObjectSummaries();
+
+            // listObjectsV2 with pagination — listObjects V1 silently truncates at 1000 objects.
+            // Always filter by prefix so we only scan tag objects, not the entire bucket.
+            List<S3ObjectSummary> objectSummary = new ArrayList<>();
+            ListObjectsV2Request listReq = new ListObjectsV2Request()
+                    .withBucketName(bucketName)
+                    .withPrefix(finalObjectName);
+            ListObjectsV2Result listResult;
+            do {
+                listResult = client.listObjectsV2(listReq);
+                objectSummary.addAll(listResult.getObjectSummaries());
+                listReq.setContinuationToken(listResult.getNextContinuationToken());
+            } while (listResult.isTruncated());
 
             List<String> tagNames = new ArrayList<>();
-            if (objectSummary != null && !objectSummary.isEmpty()) {
+            if (!objectSummary.isEmpty()) {
                 objectSummary.forEach(o -> {
                     String[] keys = o.getKey().split("/");
                     if (ArrayUtils.isNotEmpty(keys)) {
@@ -575,12 +655,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                 });
             }
 
-            // Capture effectively-final copies for use in lambda
-            final String effectiveBucketName = bucketName;
-            final String effectiveFinalObjectName = finalObjectName;
-            // Fetch all tag values concurrently to avoid N+1 serial API calls
-            tagNames.parallelStream().forEach(tagName ->
-                    objectTags.put(tagName, client.getObjectAsString(effectiveBucketName, effectiveFinalObjectName + tagName)));
+            // Serial fetch — tags per container are typically O(10), not O(1000).
+            // parallelStream() steals ForkJoinPool threads from other concurrent requests
+            // under high load, causing thread starvation and latency spikes.
+            for (String tagName : tagNames) {
+                objectTags.put(tagName, client.getObjectAsString(bucketName, finalObjectName + tagName));
+            }
 
             return objectTags;
 
