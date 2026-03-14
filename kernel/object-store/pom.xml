@@ -15,6 +15,7 @@
 		<maven.compiler.target>21</maven.compiler.target>
 		<maven.compiler.version>3.8.0</maven.compiler.version>
     	<maven.surefire.plugin.version>2.22.0</maven.surefire.plugin.version>
+
 		<maven.jar.plugin.version>3.0.2</maven.jar.plugin.version>
 		<maven.war.plugin.version>3.1.0</maven.war.plugin.version>
 		<maven.jacoco.version>0.8.11</maven.jacoco.version>
@@ -26,12 +27,15 @@
 		<maven.gpg.plugin.version>1.5</maven.gpg.plugin.version>
         <central.publishing.maven.plugin.version>0.7.0</central.publishing.maven.plugin.version>
 		<git.commit.plugin.version>3.0.1</git.commit.plugin.version>
-		<s3mock.version>0.2.4</s3mock.version>
         <kernel.core.version>1.3.0</kernel.core.version>
         <kernel-keymanager-service.version>1.3.0</kernel-keymanager-service.version>
         <kernel.bom.version>1.3.0</kernel.bom.version>
 
-        <aws.javasdk.version>1.11.368</aws.javasdk.version>
+        <!--
+            AWS SDK v2 (modular): s3 + apache-client.
+            Update to the latest GA release as needed — API is stable across 2.x.
+        -->
+        <aws.sdkv2.version>2.26.31</aws.sdkv2.version>
         <joss.adapter.version>0.10.2</joss.adapter.version>
         <mockito.core.version>3.3.3</mockito.core.version>
 
@@ -60,10 +64,17 @@
             <artifactId>joss</artifactId>
             <version>${joss.adapter.version}</version>
         </dependency>
+        <!-- AWS SDK v2 — S3 client -->
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk</artifactId>
-            <version>${aws.javasdk.version}</version>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>${aws.sdkv2.version}</version>
+        </dependency>
+        <!-- AWS SDK v2 — Apache HTTP client for sync S3Client (connection pool tuning) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>apache-client</artifactId>
+            <version>${aws.sdkv2.version}</version>
         </dependency>
         <dependency>
             <groupId>org.powermock</groupId>
@@ -75,12 +86,15 @@
             <artifactId>powermock-api-mockito2</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>io.findify</groupId>
-            <artifactId>s3mock_2.12</artifactId>
-            <version>${s3mock.version}</version>
-            <scope>test</scope>
-        </dependency>
+        <!--
+            s3mock_2.12 (io.findify) is AWS SDK v1-only — removed.
+            For S3 integration tests use Testcontainers + LocalStack:
+              <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>localstack</artifactId>
+                <scope>test</scope>
+              </dependency>
+        -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
