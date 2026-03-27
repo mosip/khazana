@@ -131,9 +131,9 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     		 bucketName=container;
     	}
 
-        bucketName = addBucketPrefix(bucketName);
-        bucketName = bucketName.toLowerCase();
-
+		bucketName = addBucketPrefix(bucketName);
+		// As per AmazonS3 bucket naming rules,name contains only lower case letters
+		bucketName = bucketName.toLowerCase();
         try {
             S3Object s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
             if (s3Object != null) {
