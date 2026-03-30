@@ -116,14 +116,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
      */
     @Override
     public void destroy() {
-        long startTime = System.nanoTime();
-
         shutdownConnection();
-
-        long endTime = System.nanoTime();
-        long durationMs = (endTime - startTime) / 1_000_000;
-
-        LOGGER.info("Destroy method completed. Time taken: {} ms", durationMs);
     }
 
     @Override
@@ -627,30 +620,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
      */
     @Override
     public boolean pack(String account, String container, String source, String process, String refId) {
-
-        long startTime = System.nanoTime();
-
-        try {
-            // Not implemented yet
             return false;
-
-        } catch (Exception e) {
-            shutdownConnection();
-            LOGGER.error(SESSIONID, REGISTRATIONID,
-                    "Exception occured to pack for : " + container + " refId: " + refId,
-                    ExceptionUtils.getStackTrace(e));
-            throw e;
-
-        } finally {
-
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-
-            LOGGER.info(SESSIONID, REGISTRATIONID,
-                    "pack",
-                    "pack completed for container: " + container +
-                            " refId: " + refId +
-                            " Time taken: " + durationMs + " ms");
-        }
     }
     /**
      * This method will return a singleton connection. It will verify connection for the first time and will reuse same connection in subsequent calls.
