@@ -118,8 +118,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     public void destroy() {
         long startTime = System.nanoTime();
 
-        LOGGER.info("Destroy method started");
-
         shutdownConnection();
 
         long endTime = System.nanoTime();
