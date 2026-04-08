@@ -830,12 +830,11 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     /**
-     * Converts an InputStream to an SDK v2 RequestBody.
+     * Converts an InputStream to an AWS SDK v2 {@link RequestBody} by reading the stream to completion
+     * via {@link InputStream#readAllBytes()} and wrapping the result with {@link RequestBody#fromBytes(byte[])}.
      *
-     * SDK v2 sync client requires a known content-length for fromInputStream().
-     * Tries InputStream.available() first — works for ByteArrayInputStream (common in MOSIP).
-     * Falls back to readAllBytes() buffering if the stream size is unknown, which is the
-     * same behaviour as SDK v1 without a Content-Length header.
+     * <p>This materializes the full payload in memory so the SDK receives a known content length.
+     * {@link IOException} from reading the stream is wrapped in {@link ObjectStoreAdapterException}.
      */
     private RequestBody toRequestBody(InputStream data) {
         try {
