@@ -34,7 +34,7 @@
             AWS SDK v2 (modular): s3 + apache-client.
             Update to the latest GA release as needed — API is stable across 2.x.
         -->
-        <aws.sdkv2.version>2.26.31</aws.sdkv2.version>
+        <aws.sdkv2.version>2.42.28</aws.sdkv2.version>
         <joss.adapter.version>0.10.2</joss.adapter.version>
         <mockito.core.version>3.3.3</mockito.core.version>
 

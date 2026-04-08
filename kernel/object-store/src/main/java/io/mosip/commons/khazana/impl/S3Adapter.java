@@ -37,6 +37,7 @@ import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -96,6 +97,14 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     private int connectionTimeout;
 
     /**
+     * Max time to wait for a free connection from the pool when all
+     * {@link #maxConnection} leases are in use. Without this, Apache HttpClient blocks
+     * indefinitely and can exhaust threads under load.
+     */
+    @Value("${object.store.connection.acquisition.timeout:10000}")
+    private int connectionAcquisitionTimeout;
+
+    /**
      * Socket (read) timeout per TCP read. Kept at 8s so a stalled S3 connection
      * fails fast rather than tying up a thread for the full apiCallTimeout budget.
      */
@@ -138,11 +147,9 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     private static final String SEPARATOR = "/";
 
-    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR =
-            "Object-prefix is already an object, please choose a different object-prefix name";
+    private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
     private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
-
 
     /**
      * Closes the S3Client and releases the underlying Apache HTTP connection pool.
@@ -173,7 +180,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         shutdownConnection();
     }
 
-
     @Override
     public InputStream getObject(String account, String container, String source,
                                  String process, String objectName) {
@@ -194,7 +200,10 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         } catch (NoSuchKeyException e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Object not found in getObject for: " + objectName, ExceptionUtils.getStackTrace(e));
-            return null;
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(),
+                    e);
         } catch (S3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "S3 error in getObject for: " + objectName + " | status: " + e.statusCode(),
@@ -228,17 +237,19 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     HeadObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
             return true;
         } catch (NoSuchKeyException e) {
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Object not found in exists for: " + objectName, ExceptionUtils.getStackTrace(e));
             return false;
         } catch (S3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "S3 error in exists for: " + objectName + " | status: " + e.statusCode(),
                     ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            throw e;
         } catch (Exception e) {
             shutdownConnection();
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Unexpected error in exists for: " + objectName, ExceptionUtils.getStackTrace(e));
+            throw e;
         }
     }
 
@@ -266,14 +277,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "S3 error in putObject for: " + objectName + " | status: " + e.statusCode(),
                     ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            throw e;
         } catch (Exception e) {
             shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Unexpected error in putObject for: " + objectName, ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            throw e;
         }
     }
 
@@ -432,12 +441,13 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "S3 error in deleteObject for: " + objectName + " | status: " + e.statusCode(),
                     ExceptionUtils.getStackTrace(e));
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            throw e;
         } catch (Exception e) {
             shutdownConnection();
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception occured to deleteObject for : " + container,
+                    ExceptionUtils.getStackTrace(e));
+            throw e;
         }
     }
 
@@ -491,6 +501,8 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                             .httpClientBuilder(ApacheHttpClient.builder()
                                     .maxConnections(maxConnection)
                                     .connectionTimeout(Duration.ofMillis(connectionTimeout))
+                                    .connectionAcquisitionTimeout(
+                                            Duration.ofMillis(connectionAcquisitionTimeout))
                                     .socketTimeout(Duration.ofMillis(socketTimeout)))
                             .overrideConfiguration(ClientOverrideConfiguration.builder()
                                     .apiCallTimeout(Duration.ofMillis(clientExecutionTimeout))
@@ -554,22 +566,32 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         // 1M objects × ~300B per summary ≈ 300 MB per concurrent call at 400 RPS.
         List<ObjectDto> objectDtos = new ArrayList<>();
 
-        if (useAccountAsBucketname) {
-            String bucketName = normalizeBucket(account);
-            String searchPattern = id + SEPARATOR;
-            getConnection(bucketName)
-                    .listObjectsV2Paginator(ListObjectsV2Request.builder()
-                            .bucket(bucketName).prefix(searchPattern).build())
-                    .forEach(page -> collectObjectDtos(page.contents(), objectDtos));
-        } else {
-            String bucketName = normalizeBucket(id);
-            getConnection(bucketName)
-                    .listObjectsV2Paginator(ListObjectsV2Request.builder()
-                            .bucket(bucketName).build())
-                    .forEach(page -> collectObjectDtos(page.contents(), objectDtos));
-        }
+        try {
+            if (useAccountAsBucketname) {
+                String bucketName = normalizeBucket(account);
+                String searchPattern = id + SEPARATOR;
+                getConnection(bucketName)
+                        .listObjectsV2Paginator(ListObjectsV2Request.builder()
+                                .bucket(bucketName).prefix(searchPattern).build())
+                        .forEach(page -> collectObjectDtos(page.contents(), objectDtos));
+            } else {
+                String bucketName = normalizeBucket(id);
+                getConnection(bucketName)
+                        .listObjectsV2Paginator(ListObjectsV2Request.builder()
+                                .bucket(bucketName).build())
+                        .forEach(page -> collectObjectDtos(page.contents(), objectDtos));
+            }
 
-        return objectDtos.isEmpty() ? null : objectDtos;
+            return objectDtos.isEmpty() ? null : objectDtos;
+
+        } catch (Exception e) {
+
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception occurred in getAllObjects for: " + id,
+                    ExceptionUtils.getStackTrace(e));
+            throw e;
+        }
     }
 
     /**
@@ -607,7 +629,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         return (useAccountAsBucketname && ArrayUtils.isNotEmpty(keys))
                 ? (String[]) ArrayUtils.remove(keys, 0) : keys;
     }
-
 
     @Override
     public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
@@ -700,16 +721,21 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             // Paginator handles continuation automatically — no manual token management.
             // Prefix filter ensures we only scan tag objects, not the entire bucket.
             // Serial fetch (not parallelStream) avoids ForkJoinPool thread starvation at 400 RPS.
-            client.listObjectsV2Paginator(ListObjectsV2Request.builder()
-                            .bucket(bucketName).prefix(prefix).build())
+            ListObjectsV2Request.Builder listReq = ListObjectsV2Request.builder().bucket(bucketName);
+            if (useAccountAsBucketname)
+                listReq.prefix(prefix);
+            client.listObjectsV2Paginator(listReq.build())
                     .forEach(page -> page.contents().forEach(s3Obj -> {
                         String[] keys = s3Obj.key().split("/");
                         if (ArrayUtils.isNotEmpty(keys)) {
                             if (useAccountAsBucketname) {
-                                if (keys.length > 1 && keys[1].endsWith(TAGS_FILENAME))
+                                if (keys.length > 1 && keys[1] != null
+                                        && keys[1].endsWith(TAGS_FILENAME)
+                                        && keys.length > 2)
                                     tagNames.add(keys[2]);
                             } else {
-                                if (keys.length > 0 && keys[0].endsWith(TAGS_FILENAME))
+                                if (keys[0] != null && keys[0].endsWith(TAGS_FILENAME)
+                                        && keys.length > 1)
                                     tagNames.add(keys[1]);
                             }
                         }
@@ -751,6 +777,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         bucketName = normalizeBucket(bucketName);
         S3Client client = getConnection(bucketName);
         try {
+            ensureBucketExists(client, bucketName);
             for (String tag : tags) {
                 client.deleteObject(DeleteObjectRequest.builder()
                         .bucket(bucketName)
@@ -773,20 +800,33 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     /**
-     * Ensures a bucket exists, caching confirmed bucket names in-memory.
-     * After the first confirmation a headBucket() call is never made again
-     * for that bucket, eliminating one API round-trip per write operation.
-     * Cache is cleared on reconnect so stale state is never used.
+     * Ensures a bucket exists:
+     * <ul>
+     *   <li>{@code useAccountAsBucketname == true}: in-memory set skips repeat {@code headBucket}
+     *       after the first successful check/create for that bucket name (cleared on reconnect).</li>
+     *   <li>{@code useAccountAsBucketname == false}: no cache — every call performs {@code headBucket}
+     *       (same as upstream always calling {@code doesBucketExistV2}).</li>
+     * </ul>
+     * Concurrent first-writers may both attempt {@code createBucket}; the loser receives
+     * {@link BucketAlreadyOwnedByYouException}, which is treated as success.
      */
     private void ensureBucketExists(S3Client client, String bucketName) {
-        if (existingBuckets.contains(bucketName))
+        if (useAccountAsBucketname && existingBuckets.contains(bucketName))
             return;
+
         try {
             client.headBucket(HeadBucketRequest.builder().bucket(bucketName).build());
         } catch (NoSuchBucketException e) {
-            client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
+            try {
+                client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
+            } catch (BucketAlreadyOwnedByYouException race) {
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "createBucket race resolved: bucket already owned, bucket=" + bucketName);
+            }
         }
-        existingBuckets.add(bucketName);
+
+        if (useAccountAsBucketname)
+            existingBuckets.add(bucketName);
     }
 
     /**
@@ -799,10 +839,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
      */
     private RequestBody toRequestBody(InputStream data) {
         try {
-            int available = data.available();
-            if (available > 0)
-                return RequestBody.fromInputStream(data, available);
-            // Unknown length — buffer into memory to satisfy SDK v2's content-length requirement
             return RequestBody.fromBytes(data.readAllBytes());
         } catch (IOException e) {
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
@@ -814,8 +850,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
      * Applies bucket prefix and lowercases per S3 naming rules.
      */
     private String normalizeBucket(String bucketName) {
-        if (!bucketName.startsWith(bucketNamePrefix))
+        if (bucketName.startsWith(bucketNamePrefix)) {
+            LOGGER.debug("Already bucketName with prefix is present" + bucketName);
+        } else {
             bucketName = bucketNamePrefix + bucketName;
+            LOGGER.debug("Adding  Prefix to bucketName" + bucketName);
+        }
         return bucketName.toLowerCase();
     }
 }

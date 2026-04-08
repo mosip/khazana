@@ -109,7 +109,7 @@ public class SafeS3InputStream extends InputStream {
                 return;
             }
 
-            long remaining = contentLength > 0 ? contentLength - bytesRead : Long.MAX_VALUE;
+            long remaining = contentLength >= 0 ? contentLength - bytesRead : Long.MAX_VALUE;
 
             if (remaining > DRAIN_THRESHOLD_BYTES) {
                 // Large remainder — abort the HTTP connection rather than draining over the network.
@@ -158,7 +158,7 @@ public class SafeS3InputStream extends InputStream {
      * always attempts a drain or abort.
      */
     public boolean isFullyRead() {
-        return contentLength > 0 && bytesRead >= contentLength;
+        return contentLength >= 0 && bytesRead >= contentLength;
     }
 
     public boolean isClosed() {
