@@ -64,7 +64,7 @@ Callers inject the adapter by Spring `@Qualifier` name: `"S3Adapter"`, `"PosixAd
 **S3Adapter specifics:**
 - Maintains a singleton `AmazonS3` connection; on any exception it calls `shutdownConnection()` to reset it so the next call retries.
 - Retries connection up to `object.store.connection.max.retry` (default 20) attempts.
-- Bucket names are always lowercased (S3 requirement).
+- Bucket names are always in lowercase (S3 requirement).
 - Optional `object.store.s3.bucket-name-prefix` is prepended to every bucket name.
 - Tags are stored as individual S3 objects under a `Tags/` prefix (not as native S3 object tags).
 - `removeContainer` and `pack` are no-ops (return false) in S3Adapter.
