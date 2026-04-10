@@ -22,6 +22,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.mosip.commons.khazana.util.SafeS3InputStream;
+import jakarta.annotation.PostConstruct;
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -154,14 +155,24 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     private static final String DEFAULT_S3_REGION = "DEFAULT";
 
     /**
-     * Region id supplied to {@link S3Client} via {@link Region#of(String)} (signing and
-     * endpoint metadata). AWS SDK for Java v2 does not allow a null or empty region id
-     * when building the client. When {@code object.store.s3.region} is unset (empty default),
-     * blank after trimming, Java {@code null}, or the literal string {@code "null"}
-     * (case-insensitive), returns {@link #DEFAULT_S3_REGION} so S3-compatible endpoints
-     * that expect a placeholder region still receive a valid id.
+     * {@link Region} for {@link S3Client}, computed once at bean init from
+     * {@code object.store.s3.region} (unchanged at runtime).
      */
-    private String effectiveS3Region() {
+    private Region resolvedS3Region;
+
+    @PostConstruct
+    void initResolvedS3Region() {
+        resolvedS3Region = Region.of(resolveConfiguredRegionId());
+    }
+
+    /**
+     * Region id from configuration, before {@link Region#of(String)}. AWS SDK for Java v2
+     * does not allow a null or empty region id when building the client. When
+     * {@code object.store.s3.region} is unset (empty default), blank after trimming,
+     * Java {@code null}, or the literal string {@code "null"} (case-insensitive), returns
+     * {@link #DEFAULT_S3_REGION} so S3-compatible endpoints still receive a valid id.
+     */
+    private String resolveConfiguredRegionId() {
         if (region == null) {
             return DEFAULT_S3_REGION;
         }
@@ -515,7 +526,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                             .credentialsProvider(StaticCredentialsProvider.create(
                                     AwsBasicCredentials.create(accessKey, secretKey)))
                             .endpointOverride(URI.create(url))
-                            .region(Region.of(effectiveS3Region()))
+                            .region(resolvedS3Region)
                             .serviceConfiguration(S3Configuration.builder()
                                     .pathStyleAccessEnabled(true)
                                     .build())
