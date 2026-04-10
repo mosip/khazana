@@ -22,6 +22,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.mosip.commons.khazana.util.SafeS3InputStream;
+import jakarta.annotation.PostConstruct;
 import org.apache.commons.lang.ArrayUtils;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -76,7 +77,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     @Value("${object.store.s3.url:null}")
     private String url;
 
-    @Value("${object.store.s3.region:null}")
+    @Value("${object.store.s3.region:}")
     private String region;
 
     @Value("${object.store.connection.max.retry:20}")
@@ -150,6 +151,37 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     private static final String TAG_BACKWARD_COMPATIBILITY_ERROR = "Object-prefix is already an object, please choose a different object-prefix name";
 
     private static final String TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR = "Access Denied";
+
+    private static final String DEFAULT_S3_REGION = "DEFAULT";
+
+    /**
+     * {@link Region} for {@link S3Client}, computed once at bean init from
+     * {@code object.store.s3.region} (unchanged at runtime).
+     */
+    private Region resolvedS3Region;
+
+    @PostConstruct
+    void initResolvedS3Region() {
+        resolvedS3Region = Region.of(resolveConfiguredRegionId());
+    }
+
+    /**
+     * Region id from configuration, before {@link Region#of(String)}. AWS SDK for Java v2
+     * does not allow a null or empty region id when building the client. When
+     * {@code object.store.s3.region} is unset (empty default), blank after trimming,
+     * Java {@code null}, or the literal string {@code "null"} (case-insensitive), returns
+     * {@link #DEFAULT_S3_REGION} so S3-compatible endpoints still receive a valid id.
+     */
+    private String resolveConfiguredRegionId() {
+        if (region == null) {
+            return DEFAULT_S3_REGION;
+        }
+        String effectiveRegion = region.trim();
+        if (effectiveRegion.isEmpty() || "null".equalsIgnoreCase(effectiveRegion)) {
+            return DEFAULT_S3_REGION;
+        }
+        return effectiveRegion;
+    }
 
     /**
      * Closes the S3Client and releases the underlying Apache HTTP connection pool.
@@ -494,7 +526,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                             .credentialsProvider(StaticCredentialsProvider.create(
                                     AwsBasicCredentials.create(accessKey, secretKey)))
                             .endpointOverride(URI.create(url))
-                            .region(Region.of(region))
+                            .region(resolvedS3Region)
                             .serviceConfiguration(S3Configuration.builder()
                                     .pathStyleAccessEnabled(true)
                                     .build())
