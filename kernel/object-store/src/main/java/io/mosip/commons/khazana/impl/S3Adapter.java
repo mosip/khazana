@@ -870,13 +870,19 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
      */
     private RequestBody toRequestBody(InputStream data) {
         try {
+            // Fast path: ByteArrayInputStream and most MOSIP streams report exact size.
+            // fromInputStream() streams directly without a full heap copy.
+            int available = data.available();
+            if (available > 0)
+                return RequestBody.fromInputStream(data, available);
+            // Fallback: unknown-length streams must be buffered; SDK v2 requires content-length.
             return RequestBody.fromBytes(data.readAllBytes());
         } catch (IOException e) {
-            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+            throw new ObjectStoreAdapterException(
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
     }
-
     /**
      * Applies bucket prefix and lowercases per S3 naming rules.
      */
