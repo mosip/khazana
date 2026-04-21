@@ -269,8 +269,6 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     HeadObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
             return true;
         } catch (NoSuchKeyException e) {
-            LOGGER.error(SESSIONID, REGISTRATIONID,
-                    "Object not found in exists for: " + objectName, ExceptionUtils.getStackTrace(e));
             return false;
         } catch (S3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
