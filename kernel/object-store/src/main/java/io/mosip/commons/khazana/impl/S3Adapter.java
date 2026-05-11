@@ -22,6 +22,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import io.mosip.commons.khazana.util.SafeS3InputStream;
 import jakarta.annotation.PostConstruct;
 import org.apache.commons.lang.ArrayUtils;
@@ -55,20 +57,18 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
-import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.commons.khazana.dto.ObjectDto;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.exception.ExceptionUtils;
-import io.mosip.kernel.core.logger.spi.Logger;
 
 @Service
 @Qualifier("S3Adapter")
 public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
-    private final Logger LOGGER = LoggerConfiguration.logConfig(S3Adapter.class);
-
+    private final Logger LOGGER = LoggerFactory.getLogger(S3Adapter.class);
+    
     @Value("${object.store.s3.accesskey:accesskey:accesskey}")
     private String accessKey;
 
