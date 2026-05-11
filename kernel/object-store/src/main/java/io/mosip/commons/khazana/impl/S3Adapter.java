@@ -5,6 +5,7 @@ import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
 import static io.mosip.commons.khazana.constant.KhazanaConstant.TAGS_FILENAME;
 import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_NOT_ACCESSIBLE;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -228,11 +229,13 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         bucketName = normalizeBucket(bucketName);
         try {
             long _t = System.currentTimeMillis();
-            var response = getConnection(bucketName).getObject(
-                    GetObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
-                    "PERF-AWS PERF-getObject op=getObject elapsed=" + (System.currentTimeMillis() - _t) + "ms bucket=" + bucketName + " key=" + finalObjectName);
-            return new SafeS3InputStream(response);
+            try (var response = getConnection(bucketName).getObject(
+                    GetObjectRequest.builder().bucket(bucketName).key(finalObjectName).build())) {
+                byte[] bytes = response.readAllBytes();
+                LOGGER.info(SESSIONID, REGISTRATIONID,
+                        "PERF-AWS PERF-getObject op=getObject elapsed=" + (System.currentTimeMillis() - _t) + "ms bucket=" + bucketName + " key=" + finalObjectName);
+                return new ByteArrayInputStream(bytes);
+            }
         } catch (NoSuchKeyException e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Object not found in getObject for: " + objectName, ExceptionUtils.getStackTrace(e));
