@@ -233,6 +233,8 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     GetObjectRequest.builder().bucket(bucketName).key(finalObjectName).build())) {
                 byte[] bytes = response.readAllBytes();
                 LOGGER.info(SESSIONID, REGISTRATIONID,
+                        "PERF-AWS PERF-getObject byte[] bytes = response.readAllBytes();");
+                LOGGER.info(SESSIONID, REGISTRATIONID,
                         "PERF-AWS PERF-getObject op=getObject elapsed=" + (System.currentTimeMillis() - _t) + "ms bucket=" + bucketName + " key=" + finalObjectName);
                 return new ByteArrayInputStream(bytes);
             }
