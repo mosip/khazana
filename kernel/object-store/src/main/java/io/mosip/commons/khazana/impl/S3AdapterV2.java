@@ -63,10 +63,10 @@ import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.exception.ExceptionUtils;
 
 @Service
-@Qualifier("S3Adapter")
-public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
+@Qualifier("S3AdapterV2")
+public class S3AdapterV2 implements ObjectStoreAdapter, DisposableBean {
 
-    private final Logger LOGGER = LoggerFactory.getLogger(S3Adapter.class);
+    private final Logger LOGGER = LoggerFactory.getLogger(S3AdapterV2.class);
 
     @Value("${object.store.s3.accesskey:accesskey:accesskey}")
     private String accessKey;
