@@ -22,11 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import io.mosip.commons.khazana.util.SafeS3InputStream;
 import jakarta.annotation.PostConstruct;
 import org.apache.commons.lang.ArrayUtils;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,7 +55,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
-
+import org.slf4j.LoggerFactory;
 import io.mosip.commons.khazana.dto.ObjectDto;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
@@ -68,7 +67,7 @@ import io.mosip.kernel.core.exception.ExceptionUtils;
 public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
 
     private final Logger LOGGER = LoggerFactory.getLogger(S3Adapter.class);
-    
+
     @Value("${object.store.s3.accesskey:accesskey:accesskey}")
     private String accessKey;
 
@@ -798,7 +797,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                 } catch (S3Exception e) {
                     if (!backwardCompatRetry
                             && (e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ERROR)
-                                || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
+                            || e.getMessage().contains(TAG_BACKWARD_COMPATIBILITY_ACCESS_DENIED_ERROR))) {
                         // Legacy: a plain object exists at the prefix key. Delete it and retry once.
                         try {
                             client.headObject(HeadObjectRequest.builder()
