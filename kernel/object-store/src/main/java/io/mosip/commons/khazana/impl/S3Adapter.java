@@ -559,10 +559,11 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             if (connection != null)
                 return connection;
 
-            long startTime = System.currentTimeMillis();
+            long retrySessionStart = System.currentTimeMillis();
             int attempt = 0;
             while (attempt < maxRetry) {
                 attempt++;
+                long attemptStartTime = System.currentTimeMillis();
                 try {
                     // Assign to connection immediately so shutdownConnection() can close it
                     // if the connectivity test below throws a non-transient exception.
@@ -597,12 +598,25 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         // Bucket not created yet — connection is healthy
                     }
 
+                    long attemptElapsed = System.currentTimeMillis() - attemptStartTime;
                     LOGGER.debug(SESSIONID, REGISTRATIONID,
-                            "getConnection", "[S3-PERF] s3Operation: headBucket - timeTaken: " + (System.currentTimeMillis() - startTime)
-                                    + " ms - bucketName: " + bucketName + " attempt: " + attempt);
+                            "getConnection",
+                            "[S3-PERF] s3Operation: connection attempt - timeTaken: " + attemptElapsed
+                                    + " ms - bucketName: " + bucketName + " attempt: " + attempt + " succeeded: true");
+                    LOGGER.debug(SESSIONID, REGISTRATIONID,
+                            "getConnection",
+                            "[S3-PERF] s3Operation: successful connection - totalTimeTaken: "
+                                    + (System.currentTimeMillis() - retrySessionStart)
+                                    + " ms - bucketName: " + bucketName + " attemptsUsed: " + attempt);
                     return connection;
 
                 } catch (Exception e) {
+                    LOGGER.debug(SESSIONID, REGISTRATIONID,
+                            "getConnection",
+                            "[S3-PERF] s3Operation: connection attempt - timeTaken: "
+                                    + (System.currentTimeMillis() - attemptStartTime)
+                                    + " ms - bucketName: " + bucketName + " attempt: " + attempt
+                                    + " succeeded: false");
                     shutdownConnection();
                     LOGGER.error(SESSIONID, REGISTRATIONID,
                             "Exception occurred while obtaining connection for " + bucketName
