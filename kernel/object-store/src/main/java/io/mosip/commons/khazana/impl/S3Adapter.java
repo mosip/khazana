@@ -126,6 +126,17 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     @Value("${object.store.s3.bucket-name-prefix:}")
     private String bucketNamePrefix;
 
+    /** When true, registers an SDK metric publisher to log HTTP connection pool stats ({@code [S3-POOL]}). */
+    @Value("${object.store.pool.stats.enabled:false}")
+    private boolean poolStatsEnabled;
+
+    /**
+     * Minimum wall-clock interval between {@code [S3-POOL]} log lines. The SDK still invokes the publisher per request;
+     * this value only throttles logging. Values {@code <= 0} fall back to 60 seconds in {@link S3PoolStatsLogger}.
+     */
+    @Value("${object.store.pool.stats.log.interval.seconds:60}")
+    private int poolStatsLogIntervalSeconds;
+
     /**
      * volatile: writes from one thread are immediately visible to all others.
      * Without it, CPUs can cache the reference per-thread so 200 concurrent threads
@@ -538,6 +549,18 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         return false;
     }
 
+    private ClientOverrideConfiguration buildClientOverrideConfiguration() {
+        ClientOverrideConfiguration.Builder b = ClientOverrideConfiguration.builder()
+                .apiCallTimeout(Duration.ofMillis(clientExecutionTimeout))
+                .retryPolicy(RetryPolicy.builder()
+                        .numRetries(sdkMaxErrorRetry)
+                        .build());
+        if (poolStatsEnabled) {
+            b.addMetricPublisher(new S3PoolStatsLogger(LOGGER, poolStatsLogIntervalSeconds));
+        }
+        return b.build();
+    }
+
     /**
      * Double-checked locking with ReentrantLock for a thread-safe singleton S3Client.
      *
@@ -581,12 +604,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                                     .connectionAcquisitionTimeout(
                                             Duration.ofMillis(connectionAcquisitionTimeout))
                                     .socketTimeout(Duration.ofMillis(socketTimeout)))
-                            .overrideConfiguration(ClientOverrideConfiguration.builder()
-                                    .apiCallTimeout(Duration.ofMillis(clientExecutionTimeout))
-                                    .retryPolicy(RetryPolicy.builder()
-                                            .numRetries(sdkMaxErrorRetry)
-                                            .build())
-                                    .build())
+                            .overrideConfiguration(buildClientOverrideConfiguration())
                             .build();
 
                     // Connectivity test — NoSuchBucketException means S3 is reachable but
