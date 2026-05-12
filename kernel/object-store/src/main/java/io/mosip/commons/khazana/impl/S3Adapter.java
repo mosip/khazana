@@ -229,12 +229,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         try {
             var response = getConnection(bucketName).getObject(
                     GetObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "getObject", "[S3-PERF] s3Operation: getObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return new SafeS3InputStream(response);
         } catch (NoSuchKeyException e) {
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "getObject", "[S3-PERF] s3Operation: getObject (not found) - timeTaken: "
                             + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
@@ -276,12 +276,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         try {
             getConnection(bucketName).headObject(
                     HeadObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "exists", "[S3-PERF] s3Operation: headObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return true;
         } catch (NoSuchKeyException e) {
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "exists", "[S3-PERF] s3Operation: headObject (not found) - timeTaken: "
                             + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
@@ -319,7 +319,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             client.putObject(
                     PutObjectRequest.builder().bucket(bucketName).key(finalObjectName).build(),
                     toRequestBody(data));
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "putObject", "[S3-PERF] s3Operation: putObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return true;
@@ -360,7 +360,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             long headStart = System.currentTimeMillis();
             HeadObjectResponse headResponse = client.headObject(
                     HeadObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "addObjectMetaData", "[S3-PERF] s3Operation: headObject - timeTaken: " + (System.currentTimeMillis() - headStart)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
 
@@ -375,7 +375,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     .metadataDirective(MetadataDirective.REPLACE)
                     .metadata(merged)
                     .build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "addObjectMetaData", "[S3-PERF] s3Operation: copyObject - timeTaken: " + (System.currentTimeMillis() - copyStart)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return metadata;
@@ -426,7 +426,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                     HeadObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
             if (headResponse.metadata() != null)
                 headResponse.metadata().forEach(metaData::put);
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "getMetaData", "[S3-PERF] s3Operation: headObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return metaData;
@@ -464,7 +464,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             int newVal = Integer.parseInt(metadata.get(metaDataKey).toString()) + 1;
             metadata.put(metaDataKey, newVal);
             addObjectMetaData(account, container, source, process, objectName, metadata);
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "incMetadata", "[S3-PERF] s3Operation: headObject, copyObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - objectName: " + objectName + " metaDataKey: " + metaDataKey);
             return newVal;
@@ -482,7 +482,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             int newVal = Integer.parseInt(metadata.get(metaDataKey).toString()) - 1;
             metadata.put(metaDataKey, newVal);
             addObjectMetaData(account, container, source, process, objectName, metadata);
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "decMetadata", "[S3-PERF] s3Operation: headObject, copyObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - objectName: " + objectName + " metaDataKey: " + metaDataKey);
             return newVal;
@@ -507,7 +507,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         try {
             getConnection(bucketName).deleteObject(
                     DeleteObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "deleteObject", "[S3-PERF] s3Operation: deleteObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return true;
@@ -596,7 +596,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         // Bucket not created yet — connection is healthy
                     }
 
-                    LOGGER.info(SESSIONID, REGISTRATIONID,
+                    LOGGER.debug(SESSIONID, REGISTRATIONID,
                             "getConnection", "[S3-PERF] s3Operation: headBucket - timeTaken: " + (System.currentTimeMillis() - startTime)
                                     + " ms - bucketName: " + bucketName + " attempt: " + attempt);
                     return connection;
@@ -661,7 +661,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         .forEach(page -> collectObjectDtos(page.contents(), objectDtos));
             }
 
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "getAllObjects", "[S3-PERF] s3Operation: listObjectsV2 - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - account: " + account + " id: " + id);
             return objectDtos.isEmpty() ? null : objectDtos;
@@ -750,7 +750,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                                     .contentLength((long) tagBytes.length)
                                     .build(),
                             RequestBody.fromBytes(tagBytes));
-                    LOGGER.info(SESSIONID, REGISTRATIONID,
+                    LOGGER.debug(SESSIONID, REGISTRATIONID,
                             "addTagsInternal", "[S3-PERF] s3Operation: putObject - timeTaken: "
                                     + (System.currentTimeMillis() - putStart)
                                     + " ms - bucketName: " + bucketName + " - tagName: " + tagName);
@@ -763,20 +763,20 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         try {
                             client.headObject(HeadObjectRequest.builder()
                                     .bucket(bucketName).key(finalObjectName).build());
-                            LOGGER.info(SESSIONID, REGISTRATIONID,
+                            LOGGER.debug(SESSIONID, REGISTRATIONID,
                                     "addTagsInternal", "[S3-PERF] s3Operation: headObject - timeTaken: "
                                             + (System.currentTimeMillis() - headStart)
                                             + " ms - bucketName: " + bucketName + " - tagName: " + tagName);
                             long deleteStart = System.currentTimeMillis();
                             client.deleteObject(DeleteObjectRequest.builder()
                                     .bucket(bucketName).key(finalObjectName).build());
-                            LOGGER.info(SESSIONID, REGISTRATIONID,
+                            LOGGER.debug(SESSIONID, REGISTRATIONID,
                                     "addTagsInternal", "[S3-PERF] s3Operation: deleteObject (backward compat cleanup) - timeTaken: "
                                             + (System.currentTimeMillis() - deleteStart)
                                             + " ms - bucketName: " + bucketName + " - tagName: " + tagName);
                             return addTagsInternal(account, container, tags, true);
                         } catch (NoSuchKeyException ignored) {
-                            LOGGER.info(SESSIONID, REGISTRATIONID,
+                            LOGGER.debug(SESSIONID, REGISTRATIONID,
                                     "addTagsInternal", "[S3-PERF] s3Operation: headObject (not found) - timeTaken: "
                                             + (System.currentTimeMillis() - headStart)
                                             + " ms - bucketName: " + bucketName + " - tagName: " + tagName);
@@ -798,7 +798,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
-        LOGGER.info(SESSIONID, REGISTRATIONID,
+        LOGGER.debug(SESSIONID, REGISTRATIONID,
                 "addTags", "[S3-PERF] s3Operation: putObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                         + " ms - bucketName: " + bucketName + " container: " + container);
         return tags;
@@ -851,7 +851,7 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                                         .bucket(bucketName).key(prefix + tagName).build())
                                 .asUtf8String());
             }
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "getTags", "[S3-PERF] s3Operation: listObjectsV2, getObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " container: " + container);
             return objectTags;
@@ -892,12 +892,12 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                         .bucket(bucketName)
                         .key(ObjectStoreUtil.getName(finalObjectName, tag))
                         .build());
-                LOGGER.info(SESSIONID, REGISTRATIONID,
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
                         "deleteTags", "[S3-PERF] s3Operation: deleteObject - timeTaken: "
                                 + (System.currentTimeMillis() - deleteStart)
                                 + " ms - bucketName: " + bucketName + " - tag: " + tag);
             }
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "deleteTags", "[S3-PERF] s3Operation: deleteObject - timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName + " container: " + container);
         } catch (S3Exception e) {
@@ -933,24 +933,24 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
         long startTime = System.currentTimeMillis();
         try {
             client.headBucket(HeadBucketRequest.builder().bucket(bucketName).build());
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "ensureBucketExists", "[S3-PERF] s3Operation: headBucket - timeTaken: "
                             + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName);
         } catch (NoSuchBucketException e) {
-            LOGGER.info(SESSIONID, REGISTRATIONID,
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "ensureBucketExists", "[S3-PERF] s3Operation: headBucket (not found) - timeTaken: "
                             + (System.currentTimeMillis() - startTime)
                             + " ms - bucketName: " + bucketName);
             long createStart = System.currentTimeMillis();
             try {
                 client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
-                LOGGER.info(SESSIONID, REGISTRATIONID,
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
                         "ensureBucketExists", "[S3-PERF] s3Operation: createBucket - timeTaken: "
                                 + (System.currentTimeMillis() - createStart)
                                 + " ms - bucketName: " + bucketName);
             } catch (BucketAlreadyOwnedByYouException race) {
-                LOGGER.info(SESSIONID, REGISTRATIONID,
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
                         "ensureBucketExists", "[S3-PERF] s3Operation: createBucket (already owned) - timeTaken: "
                                 + (System.currentTimeMillis() - createStart)
                                 + " ms - bucketName: " + bucketName);
