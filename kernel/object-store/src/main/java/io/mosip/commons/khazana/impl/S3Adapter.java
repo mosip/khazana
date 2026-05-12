@@ -225,18 +225,19 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
             bucketName = container;
         }
         bucketName = normalizeBucket(bucketName);
-        long startTime = System.currentTimeMillis();
+        long firstByteStart = System.currentTimeMillis();
         try {
             var response = getConnection(bucketName).getObject(
                     GetObjectRequest.builder().bucket(bucketName).key(finalObjectName).build());
             LOGGER.debug(SESSIONID, REGISTRATIONID,
-                    "getObject", "[S3-PERF] s3Operation: getObject - timeTaken: " + (System.currentTimeMillis() - startTime)
+                    "getObject", "[S3-PERF] s3Operation: getObject - firstByteLatency: "
+                            + (System.currentTimeMillis() - firstByteStart)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             return new SafeS3InputStream(response);
         } catch (NoSuchKeyException e) {
             LOGGER.debug(SESSIONID, REGISTRATIONID,
-                    "getObject", "[S3-PERF] s3Operation: getObject (not found) - timeTaken: "
-                            + (System.currentTimeMillis() - startTime)
+                    "getObject", "[S3-PERF] s3Operation: getObject (not found) - firstByteLatency: "
+                            + (System.currentTimeMillis() - firstByteStart)
                             + " ms - bucketName: " + bucketName + " - objectName: " + objectName);
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Object not found in getObject for: " + objectName, ExceptionUtils.getStackTrace(e));
