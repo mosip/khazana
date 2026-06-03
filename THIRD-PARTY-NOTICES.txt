@@ -1,0 +1,145 @@
+THIRD-PARTY-NOTICES
+
+This project includes third-party packages that are distributed under various open-source licenses. Below is a list of packages and their associated licenses.
+
+================================================================================
+Package: Maven Jar Plugin
+Version: 3.0.2
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-jar-plugin/
+================================================================================
+
+================================================================================
+Package: Maven Javadoc Plugin
+Version: 3.2.0
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-javadoc-plugin/
+================================================================================
+
+================================================================================
+Package: Maven Surefire Plugin
+Version: 2.22.0
+License: Apache License 2.0
+Homepage: https://maven.apache.org/surefire/maven-surefire-plugin/
+================================================================================
+
+================================================================================
+Package: Maven Compiler Plugin
+Version: 3.8.0
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-compiler-plugin/
+================================================================================
+
+================================================================================
+Package: Maven Source Plugin
+Version: 2.2.1
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-source-plugin/
+================================================================================
+
+================================================================================
+Package: Maven GPG Plugin
+Version: 1.5
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-gpg-plugin/
+================================================================================
+
+================================================================================
+Package: Maven WAR Plugin
+Version: 3.1.0
+License: Apache License 2.0
+Homepage: https://maven.apache.org/plugins/maven-war-plugin/
+================================================================================
+
+================================================================================
+Package: Spring Boot Maven Plugin
+Version: 3.2.3
+License: Apache License 2.0
+Homepage: https://spring.io/projects/spring-boot
+================================================================================
+
+================================================================================
+Package: Central Publishing Maven Plugin
+Version: 0.7.0
+License: Apache License 2.0
+Homepage: https://central.sonatype.org/publish/
+================================================================================
+
+================================================================================
+Package: Lombok
+Version: Not specified
+License: MIT License (Inferred from project’s official repository)
+Homepage: https://projectlombok.org/
+================================================================================
+
+================================================================================
+Package: JUnit Vintage Engine
+Version: Not specified
+License: EPL-2.0 (Inferred from JUnit 5 project)
+Homepage: https://junit.org/junit5/
+================================================================================
+
+================================================================================
+Package: PowerMock API Mockito2
+Version: Not specified
+License: Apache License 2.0 (Inferred from project’s official repository)
+Homepage: https://github.com/powermock/powermock
+================================================================================
+
+================================================================================
+Package: PowerMock Module JUnit4
+Version: Not specified
+License: Apache License 2.0 (Inferred)
+Homepage: https://github.com/powermock/powermock
+================================================================================
+
+================================================================================
+Package: S3Mock (Findify)
+Version: 0.2.4
+License: MIT
+Homepage: https://github.com/findify/s3mock
+================================================================================
+
+================================================================================
+Package: JOSS (Java OpenStack Storage)
+Version: 0.10.2
+License: Apache License 2.0
+Homepage: https://github.com/javaswift/joss
+================================================================================
+
+================================================================================
+Package: Mockito Core
+Version: 3.3.3
+License: MIT
+Homepage: https://site.mockito.org/
+================================================================================
+
+================================================================================
+Package: AWS Java SDK
+Version: 1.11.368
+License: Apache License 2.0
+Homepage: https://aws.amazon.com/sdk-for-java/
+================================================================================
+
+================================================================================
+Package: MOSIP Kernel Core
+Version: 1.3.0-SNAPSHOT
+License: MPL-2.0 (Inferred from MOSIP repositories)
+Homepage: https://github.com/mosip/mosip-kernel
+================================================================================
+
+================================================================================
+Package: MOSIP Kernel BOM
+Version: 1.3.0-SNAPSHOT
+License: MPL-2.0 (Inferred)
+Homepage: https://github.com/mosip/mosip-kernel
+================================================================================
+
+================================================================================
+Package: MOSIP Kernel Keymanager Service
+Version: 1.3.0-SNAPSHOT
+License: MPL-2.0 (Inferred)
+Homepage: https://github.com/mosip/mosip-kernel
+================================================================================
+
+Full license texts and additional details for each of the above packages are available in the license/ directory of this repository. Please refer to those files or the original source of each package for complete legal terms and conditions.
