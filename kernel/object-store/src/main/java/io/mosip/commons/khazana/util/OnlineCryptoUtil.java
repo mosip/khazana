@@ -23,7 +23,7 @@ import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.kernel.core.exception.ServiceError;
 import io.mosip.kernel.core.http.RequestWrapper;
 import io.mosip.kernel.core.util.CryptoUtil;
-import io.mosip.kernel.core.util.DateUtils;
+import io.mosip.kernel.core.util.DateUtils2;
 
 @Component
 public class OnlineCryptoUtil {
@@ -81,14 +81,14 @@ public class OnlineCryptoUtil {
             sRandom.nextBytes(aad);
             cryptomanagerRequestDto.setAad(CryptoUtil.encodeBase64String(aad));
             cryptomanagerRequestDto.setSalt(CryptoUtil.encodeBase64String(nonce));
-            cryptomanagerRequestDto.setTimeStamp(DateUtils.getUTCCurrentDateTime());
+            cryptomanagerRequestDto.setTimeStamp(DateUtils2.getUTCCurrentDateTime());
 
             request.setId(DECRYPT_SERVICE_ID);
             request.setMetadata(null);
             request.setRequest(cryptomanagerRequestDto);
             DateTimeFormatter format = DateTimeFormatter.ofPattern(DATETIME_PATTERN);
             LocalDateTime localdatetime = LocalDateTime
-                    .parse(DateUtils.getUTCCurrentDateTimeString(DATETIME_PATTERN), format);
+                    .parse(DateUtils2.getUTCCurrentDateTimeString(DATETIME_PATTERN), format);
             request.setRequesttime(localdatetime);
             request.setVersion(APPLICATION_VERSION);
             HttpEntity<RequestWrapper<CryptomanagerRequestDto>> httpEntity = new HttpEntity<>(request);
@@ -141,14 +141,14 @@ public class OnlineCryptoUtil {
             cryptomanagerRequestDto.setSalt(CryptoUtil.encodeBase64String(nonce));
             cryptomanagerRequestDto.setData(CryptoUtil.encodeBase64String(encryptedData));
             cryptomanagerRequestDto.setPrependThumbprint(isPrependThumbprintEnabled);
-            cryptomanagerRequestDto.setTimeStamp(DateUtils.getUTCCurrentDateTime());
+            cryptomanagerRequestDto.setTimeStamp(DateUtils2.getUTCCurrentDateTime());
 
             request.setId(DECRYPT_SERVICE_ID);
             request.setMetadata(null);
             request.setRequest(cryptomanagerRequestDto);
             DateTimeFormatter format = DateTimeFormatter.ofPattern(DATETIME_PATTERN);
             LocalDateTime localdatetime = LocalDateTime
-                    .parse(DateUtils.getUTCCurrentDateTimeString(DATETIME_PATTERN), format);
+                    .parse(DateUtils2.getUTCCurrentDateTimeString(DATETIME_PATTERN), format);
             request.setRequesttime(localdatetime);
             request.setVersion(APPLICATION_VERSION);
             HttpEntity<RequestWrapper<CryptomanagerRequestDto>> httpEntity = new HttpEntity<>(request);
