@@ -37,4 +37,6 @@ public interface ObjectStoreAdapter {
 	public Map<String, String> getTags(String account, String container);
 	
 	public void deleteTags(String account, String container, List<String> tags);
+
+	public boolean copyAndReplaceObject(String account, String container, String srcObjectKey, String destObjectKey);
 }

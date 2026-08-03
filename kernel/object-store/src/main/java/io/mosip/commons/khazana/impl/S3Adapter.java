@@ -538,6 +538,42 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     @Override
+    public boolean copyAndReplaceObject(String account, String container,
+                                        String srcObjectKey, String destObjectKey) {
+        String bucketName = normalizeBucket(useAccountAsBucketname ? account : container);
+        long startTime = System.currentTimeMillis();
+        try {
+            getConnection(bucketName).copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(bucketName)
+                    .sourceKey(srcObjectKey)
+                    .destinationBucket(bucketName)
+                    .destinationKey(destObjectKey)
+                    .build());
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
+                    "copyAndReplaceObject", "[S3-PERF] s3Operation: copyObject - timeTaken: "
+                            + (System.currentTimeMillis() - startTime)
+                            + " ms - bucketName: " + bucketName
+                            + " - srcKey: " + srcObjectKey + " - destKey: " + destObjectKey);
+            return true;
+        } catch (S3Exception e) {
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "S3 error in copyAndReplaceObject from: " + srcObjectKey
+                            + " to: " + destObjectKey + " | status: " + e.statusCode(),
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        } catch (Exception e) {
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Unexpected error in copyAndReplaceObject from: " + srcObjectKey
+                            + " to: " + destObjectKey,
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
+    }
+
+    @Override
     public boolean removeContainer(String account, String container,
                                    String source, String process) {
         return false;

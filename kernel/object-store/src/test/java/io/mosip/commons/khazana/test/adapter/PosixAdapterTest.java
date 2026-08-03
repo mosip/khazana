@@ -164,4 +164,10 @@ public class PosixAdapterTest {
         assertNull("Put object should be null", result);
     }
 
+    @Test
+    public void testCopyAndReplaceObject() {
+        boolean result = posixAdapter.copyAndReplaceObject(account, container, "src/key", "dest/key");
+        assertFalse("PosixAdapter copyAndReplaceObject is not implemented — should return false", result);
+    }
+
 }
