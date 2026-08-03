@@ -205,11 +205,6 @@ public class SwiftAdapter implements ObjectStoreAdapter {
     }
 
 	@Override
-	public boolean copyAndReplaceObject(String account, String container, String srcObjectKey, String destObjectKey) {
-		return false;
-	}
-
-	@Override
 	public void deleteTags(String account, String containerName, List<String> tags) {
 		Map<String, Object> tagMap = new HashMap<>();
 		Container container = getConnection(account).getContainer(containerName);

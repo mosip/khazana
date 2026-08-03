@@ -56,6 +56,7 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.commons.khazana.dto.ObjectDto;
+import io.mosip.commons.khazana.dto.ObjectStoreReference;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import io.mosip.commons.khazana.util.ObjectStoreUtil;
@@ -538,35 +539,61 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     @Override
-    public boolean copyAndReplaceObject(String account, String container,
-                                        String srcObjectKey, String destObjectKey) {
-        String bucketName = normalizeBucket(useAccountAsBucketname ? account : container);
+    public boolean moveObject(ObjectStoreReference src, ObjectStoreReference dst,
+                              boolean deleteSourceAfterCopy) {
+        String srcBucketName;
+        String srcObjectName;
+        if (useAccountAsBucketname) {
+            srcBucketName = normalizeBucket(src.getAccount());
+            srcObjectName = ObjectStoreUtil.getName(src.getContainer(), src.getSource(), src.getProcess(), src.getObjectName());
+        } else {
+            srcBucketName = normalizeBucket(src.getContainer());
+            srcObjectName = ObjectStoreUtil.getName(src.getSource(), src.getProcess(), src.getObjectName());
+        }
+
+        String dstBucketName;
+        String dstObjectName;
+        if (useAccountAsBucketname) {
+            dstBucketName = normalizeBucket(dst.getAccount());
+            dstObjectName = ObjectStoreUtil.getName(dst.getContainer(), dst.getSource(), dst.getProcess(), dst.getObjectName());
+        } else {
+            dstBucketName = normalizeBucket(dst.getContainer());
+            dstObjectName = ObjectStoreUtil.getName(dst.getSource(), dst.getProcess(), dst.getObjectName());
+        }
+
         long startTime = System.currentTimeMillis();
         try {
-            getConnection(bucketName).copyObject(CopyObjectRequest.builder()
-                    .sourceBucket(bucketName)
-                    .sourceKey(srcObjectKey)
-                    .destinationBucket(bucketName)
-                    .destinationKey(destObjectKey)
+            getConnection(srcBucketName).copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(srcBucketName)
+                    .sourceKey(srcObjectName)
+                    .destinationBucket(dstBucketName)
+                    .destinationKey(dstObjectName)
                     .build());
             LOGGER.debug(SESSIONID, REGISTRATIONID,
-                    "copyAndReplaceObject", "[S3-PERF] s3Operation: copyObject - timeTaken: "
+                    "moveObject", "[S3-PERF] s3Operation: copyObject - timeTaken: "
                             + (System.currentTimeMillis() - startTime)
-                            + " ms - bucketName: " + bucketName
-                            + " - srcKey: " + srcObjectKey + " - destKey: " + destObjectKey);
+                            + " ms - srcBucket: " + srcBucketName + " - srcKey: " + srcObjectName
+                            + " - dstBucket: " + dstBucketName + " - dstKey: " + dstObjectName);
+            if (deleteSourceAfterCopy) {
+                getConnection(srcBucketName).deleteObject(
+                        DeleteObjectRequest.builder().bucket(srcBucketName).key(srcObjectName).build());
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "moveObject", "[S3-PERF] s3Operation: deleteObject (source) - timeTaken: "
+                                + (System.currentTimeMillis() - startTime)
+                                + " ms - srcBucket: " + srcBucketName + " - srcKey: " + srcObjectName);
+            }
             return true;
         } catch (S3Exception e) {
             LOGGER.error(SESSIONID, REGISTRATIONID,
-                    "S3 error in copyAndReplaceObject from: " + srcObjectKey
-                            + " to: " + destObjectKey + " | status: " + e.statusCode(),
+                    "S3 error in moveObject from: " + srcObjectName + " to: " + dstObjectName
+                            + " | status: " + e.statusCode(),
                     ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         } catch (Exception e) {
             shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID,
-                    "Unexpected error in copyAndReplaceObject from: " + srcObjectKey
-                            + " to: " + destObjectKey,
+                    "Unexpected error in moveObject from: " + srcObjectName + " to: " + dstObjectName,
                     ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);

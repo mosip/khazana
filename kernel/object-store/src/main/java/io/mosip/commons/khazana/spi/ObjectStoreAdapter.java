@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.mosip.commons.khazana.dto.ObjectDto;
+import io.mosip.commons.khazana.dto.ObjectStoreReference;
 
 public interface ObjectStoreAdapter {
 
@@ -38,5 +39,18 @@ public interface ObjectStoreAdapter {
 	
 	public void deleteTags(String account, String container, List<String> tags);
 
-	public boolean copyAndReplaceObject(String account, String container, String srcObjectKey, String destObjectKey);
+	/**
+	 * Copies the object identified by {@code src} to the location identified by
+	 * {@code dst}. If {@code deleteSourceAfterCopy} is {@code true}, the source
+	 * object is deleted after a successful copy, effectively performing a move.
+	 *
+	 * @param src                  reference to the source object
+	 * @param dst                  reference to the destination object
+	 * @param deleteSourceAfterCopy whether to delete the source after a successful copy
+	 * @return {@code true} if the operation succeeded; {@code false} otherwise
+	 */
+	public default boolean moveObject(ObjectStoreReference src, ObjectStoreReference dst,
+			boolean deleteSourceAfterCopy) {
+		return false;
+	}
 }

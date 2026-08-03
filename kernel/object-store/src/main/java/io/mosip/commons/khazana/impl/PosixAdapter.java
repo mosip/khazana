@@ -376,11 +376,6 @@ public class PosixAdapter implements ObjectStoreAdapter {
 
 	}
 
-	@Override
-	public boolean copyAndReplaceObject(String account, String container, String srcObjectKey, String destObjectKey) {
-		return false;
-	}
-
 	private JSONObject containterRemoveTagging(String account, String container,List<String> tags) {
 	
 		Map<String, String> existingTags = getTags(account, container);
