@@ -541,28 +541,29 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     @Override
     public boolean moveObject(ObjectStoreReference src, ObjectStoreReference dst,
                               boolean deleteSourceAfterCopy) {
-        String srcBucketName;
-        String srcObjectName;
-        if (useAccountAsBucketname) {
-            srcBucketName = normalizeBucket(src.getAccount());
-            srcObjectName = ObjectStoreUtil.getName(src.getContainer(), src.getSource(), src.getProcess(), src.getObjectName());
-        } else {
-            srcBucketName = normalizeBucket(src.getContainer());
-            srcObjectName = ObjectStoreUtil.getName(src.getSource(), src.getProcess(), src.getObjectName());
-        }
-
-        String dstBucketName;
-        String dstObjectName;
-        if (useAccountAsBucketname) {
-            dstBucketName = normalizeBucket(dst.getAccount());
-            dstObjectName = ObjectStoreUtil.getName(dst.getContainer(), dst.getSource(), dst.getProcess(), dst.getObjectName());
-        } else {
-            dstBucketName = normalizeBucket(dst.getContainer());
-            dstObjectName = ObjectStoreUtil.getName(dst.getSource(), dst.getProcess(), dst.getObjectName());
-        }
-
-        long startTime = System.currentTimeMillis();
+        String srcBucketName = "";
+        String srcObjectName = "";
+        String dstBucketName = "";
+        String dstObjectName = "";
         try {
+            if (useAccountAsBucketname) {
+                srcBucketName = normalizeBucket(src.getAccount());
+                srcObjectName = ObjectStoreUtil.getName(src.getContainer(), src.getSource(), src.getProcess(), src.getObjectName());
+            } else {
+                srcBucketName = normalizeBucket(src.getContainer());
+                srcObjectName = ObjectStoreUtil.getName(src.getSource(), src.getProcess(), src.getObjectName());
+            }
+
+            if (useAccountAsBucketname) {
+                dstBucketName = normalizeBucket(dst.getAccount());
+                dstObjectName = ObjectStoreUtil.getName(dst.getContainer(), dst.getSource(), dst.getProcess(), dst.getObjectName());
+            } else {
+                dstBucketName = normalizeBucket(dst.getContainer());
+                dstObjectName = ObjectStoreUtil.getName(dst.getSource(), dst.getProcess(), dst.getObjectName());
+            }
+
+            long startTime = System.currentTimeMillis();
+
             getConnection(srcBucketName).copyObject(CopyObjectRequest.builder()
                     .sourceBucket(srcBucketName)
                     .sourceKey(srcObjectName)
