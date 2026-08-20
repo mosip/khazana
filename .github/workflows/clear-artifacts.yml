@@ -9,6 +9,10 @@ on:
         required: false
         default: 'Triggered for Updates'
         type: string
+        
+permissions:
+  actions: write
+
 jobs:
   delete-artifacts:
     uses: mosip/kattu/.github/workflows/clear-artifacts.yml@master
