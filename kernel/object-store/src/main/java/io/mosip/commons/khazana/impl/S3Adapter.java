@@ -809,6 +809,26 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     }
 
     @Override
+    public List<String> listObjectsByPrefix(String account, String container, String prefix) {
+        String bucketName = useAccountAsBucketname ? normalizeBucket(account) : normalizeBucket(container);
+        List<String> keys = new ArrayList<>();
+        try {
+            getConnection(bucketName)
+                    .listObjectsV2Paginator(ListObjectsV2Request.builder()
+                            .bucket(bucketName)
+                            .prefix(prefix)
+                            .build())
+                    .forEach(page -> page.contents().forEach(obj -> keys.add(obj.key())));
+        } catch (Exception e) {
+            shutdownConnection();
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception in listObjectsByPrefix for prefix: " + prefix, e.getMessage());
+            throw e;
+        }
+        return keys;
+    }
+
+    @Override
     public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
         return addTagsInternal(account, container, tags, false);
     }

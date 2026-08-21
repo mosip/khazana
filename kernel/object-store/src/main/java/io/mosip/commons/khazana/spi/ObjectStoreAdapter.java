@@ -53,4 +53,20 @@ public interface ObjectStoreAdapter {
 			boolean deleteSourceAfterCopy) {
 		return false;
 	}
+
+	/**
+	 * Returns the full object keys (relative to the bucket root) for all objects
+	 * whose key starts with {@code prefix} in the given container.
+	 *
+	 * <p>The default implementation returns an empty list so that existing adapter
+	 * implementations remain source-compatible without needing to override this method.
+	 *
+	 * @param account   object-store account name
+	 * @param container bucket / container name
+	 * @param prefix    key prefix to filter on (e.g. {@code "_draft/ridHash/Biometrics/"})
+	 * @return list of full object keys matching the prefix; never {@code null}
+	 */
+	public default List<String> listObjectsByPrefix(String account, String container, String prefix) {
+		return java.util.Collections.emptyList();
+	}
 }
