@@ -819,12 +819,20 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
                             .bucket(bucketName)
                             .prefix(objectPrefix)
                             .build())
-                    .forEach(page -> page.contents().forEach(obj -> keys.add(obj.key())));
+
+                    .forEach(page -> page.contents().forEach(obj -> {
+                        String key = obj.key();
+                        if (useAccountAsBucketname && key.startsWith(container + "/")) {
+                            key = key.substring(container.length() + 1);
+                        }
+                        keys.add(key);
+                    }));
         } catch (Exception e) {
             shutdownConnection();
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Exception in listObjectsByPrefix for prefix: " + prefix, e.getMessage());
-            throw e;
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         }
         return keys;
     }

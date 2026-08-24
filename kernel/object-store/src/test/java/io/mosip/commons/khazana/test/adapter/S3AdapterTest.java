@@ -24,10 +24,8 @@ import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 import java.util.List;
 import java.util.function.Consumer;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertThrows;
+import static io.mosip.commons.khazana.constant.KhazanaErrorCodes.OBJECT_STORE_NOT_ACCESSIBLE;
+import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
@@ -193,14 +191,14 @@ public class S3AdapterTest {
         assertTrue("result should be empty when no objects match prefix", result.isEmpty());
     }
 
-    @Test
     public void should_useAccountAsBucketName_when_useAccountAsBucketnameIsTrue() {
         ReflectionTestUtils.setField(s3Adapter, "useAccountAsBucketname", true);
         String prefix = "_draft/abc123/Biometrics/";
-        String expectedPrefix = CONTAINER + "/" + prefix;
-        String matchingKey = expectedPrefix + "face.cbeff";
+        String expectedS3Prefix = CONTAINER + "/" + prefix;           // what S3 is queried with
+        String s3BucketKey = expectedS3Prefix + "face.cbeff";         // what S3 stores/returns
+        String expectedReturnedKey = prefix + "face.cbeff";           // what adapter should return (stripped)
 
-        S3Object s3Object = S3Object.builder().key(matchingKey).build();
+        S3Object s3Object = S3Object.builder().key(s3BucketKey).build();
         ListObjectsV2Response page = ListObjectsV2Response.builder().contents(s3Object).build();
 
         when(s3Client.listObjectsV2Paginator(any(ListObjectsV2Request.class))).thenReturn(paginator);
@@ -214,25 +212,51 @@ public class S3AdapterTest {
 
         ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
         verify(s3Client).listObjectsV2Paginator(captor.capture());
-        assertEquals("bucket should be account name when useAccountAsBucketname=true", ACCOUNT, captor.getValue().bucket());
-        assertEquals("prefix should include CONTAINER when useAccountAsBucketname=true", expectedPrefix, captor.getValue().prefix());
-        assertTrue("result should contain key under container-scoped prefix", result.contains(matchingKey));
-    }
+        assertEquals(ACCOUNT, captor.getValue().bucket());
+        assertEquals(expectedS3Prefix, captor.getValue().prefix());
 
+        // Assert stripped, container-relative key (ready for moveObject)
+        assertEquals(1, result.size());
+        assertTrue(result.contains(expectedReturnedKey));
+        assertFalse("container prefix should be stripped from returned keys",
+                result.contains(s3BucketKey));
+    }
     @Test
-    public void should_rethrowException_when_listObjectsByPrefixFails() {
-        S3Exception s3Ex = (S3Exception) S3Exception.builder()
+    public void should_feedListedKeysDirectlyIntoMoveObject_when_useAccountAsBucketnameIsTrue() {
+        ReflectionTestUtils.setField(s3Adapter, "useAccountAsBucketname", true);
+        String prefix = "_draft/abc123/Biometrics/";
+        String listedKey = prefix + "bio.cbeff";  // stripped key from listObjectsByPrefix
+
+        // ... mock list to return container/prefix/bio.cbeff from S3, assert list returns listedKey ...
+
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, listedKey);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, "Biometrics/bio.cbeff");
+        when(s3Client.copyObject(any(CopyObjectRequest.class)))
+                .thenReturn(CopyObjectResponse.builder().build());
+
+        s3Adapter.moveObject(src, dst, false);
+
+        ArgumentCaptor<CopyObjectRequest> captor = ArgumentCaptor.forClass(CopyObjectRequest.class);
+        verify(s3Client).copyObject(captor.capture());
+        assertEquals(CONTAINER + "/" + listedKey, captor.getValue().sourceKey());  // moveObject re-adds container
+    }
+    @Test
+    public void should_throwObjectStoreAdapterException_when_listObjectsByPrefixFails() {
+        S3Exception s3Exception = (S3Exception) S3Exception.builder()
                 .statusCode(500)
                 .message("Internal Server Error")
                 .build();
-        when(s3Client.listObjectsV2Paginator(any(ListObjectsV2Request.class))).thenThrow(s3Ex);
 
-        S3Exception thrown = assertThrows(
-                "S3Exception should be rethrown as-is",
-                S3Exception.class,
+        when(s3Client.listObjectsV2Paginator(any(ListObjectsV2Request.class)))
+                .thenThrow(s3Exception);
+
+        ObjectStoreAdapterException thrown = assertThrows(
+                ObjectStoreAdapterException.class,
                 () -> s3Adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, "_draft/")
         );
-        assertEquals(500, thrown.statusCode());
+
+        assertEquals(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), thrown.getErrorCode());
+        assertSame(s3Exception, thrown.getCause());
     }
 
     @Test
