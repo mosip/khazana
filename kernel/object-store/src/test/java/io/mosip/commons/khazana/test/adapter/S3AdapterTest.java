@@ -197,15 +197,26 @@ public class S3AdapterTest {
     public void should_useAccountAsBucketName_when_useAccountAsBucketnameIsTrue() {
         ReflectionTestUtils.setField(s3Adapter, "useAccountAsBucketname", true);
         String prefix = "_draft/abc123/Biometrics/";
+        String expectedPrefix = CONTAINER + "/" + prefix;
+        String matchingKey = expectedPrefix + "face.cbeff";
+
+        S3Object s3Object = S3Object.builder().key(matchingKey).build();
+        ListObjectsV2Response page = ListObjectsV2Response.builder().contents(s3Object).build();
 
         when(s3Client.listObjectsV2Paginator(any(ListObjectsV2Request.class))).thenReturn(paginator);
-        doAnswer(invocation -> null).when(paginator).forEach(any());
+        doAnswer(invocation -> {
+            Consumer<ListObjectsV2Response> consumer = invocation.getArgument(0);
+            consumer.accept(page);
+            return null;
+        }).when(paginator).forEach(any());
 
-        s3Adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, prefix);
+        List<String> result = s3Adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, prefix);
 
         ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
         verify(s3Client).listObjectsV2Paginator(captor.capture());
         assertEquals("bucket should be account name when useAccountAsBucketname=true", ACCOUNT, captor.getValue().bucket());
+        assertEquals("prefix should include CONTAINER when useAccountAsBucketname=true", expectedPrefix, captor.getValue().prefix());
+        assertTrue("result should contain key under container-scoped prefix", result.contains(matchingKey));
     }
 
     @Test

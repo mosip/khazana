@@ -811,12 +811,13 @@ public class S3Adapter implements ObjectStoreAdapter, DisposableBean {
     @Override
     public List<String> listObjectsByPrefix(String account, String container, String prefix) {
         String bucketName = useAccountAsBucketname ? normalizeBucket(account) : normalizeBucket(container);
+        String objectPrefix = useAccountAsBucketname ? ObjectStoreUtil.getName(container, prefix) : prefix;
         List<String> keys = new ArrayList<>();
         try {
             getConnection(bucketName)
                     .listObjectsV2Paginator(ListObjectsV2Request.builder()
                             .bucket(bucketName)
-                            .prefix(prefix)
+                            .prefix(objectPrefix)
                             .build())
                     .forEach(page -> page.contents().forEach(obj -> keys.add(obj.key())));
         } catch (Exception e) {
