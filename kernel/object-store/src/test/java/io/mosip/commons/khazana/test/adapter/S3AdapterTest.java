@@ -190,7 +190,7 @@ public class S3AdapterTest {
 
         assertTrue("result should be empty when no objects match prefix", result.isEmpty());
     }
-
+    @Test
     public void should_useAccountAsBucketName_when_useAccountAsBucketnameIsTrue() {
         ReflectionTestUtils.setField(s3Adapter, "useAccountAsBucketname", true);
         String prefix = "_draft/abc123/Biometrics/";
