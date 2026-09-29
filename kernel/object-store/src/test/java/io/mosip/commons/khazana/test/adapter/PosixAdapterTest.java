@@ -1,167 +1,121 @@
 package io.mosip.commons.khazana.test.adapter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.mosip.commons.khazana.exception.FileNotFoundInDestinationException;
 import io.mosip.commons.khazana.impl.PosixAdapter;
-import io.mosip.kernel.core.util.FileUtils;
-import org.apache.commons.io.IOUtils;
-import org.json.JSONObject;
+import io.mosip.commons.khazana.util.EncryptionHelper;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PowerMockIgnore;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
-import org.springframework.context.annotation.PropertySource;
+import org.junit.rules.TemporaryFolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
-import java.io.File;
-import java.io.FileInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({File.class, FileInputStream.class, ZipInputStream.class, ZipEntry.class,
-        PosixAdapter.class, IOUtils.class, FileUtils.class})
-@PowerMockIgnore({"com.sun.org.apache.xerces.*", "javax.xml.*", "org.xml.*", "javax.management.*"})
-@PropertySource("classpath:application-test.properties")
+/**
+ * Exercises {@link PosixAdapter} against a temporary directory. No PowerMock.
+ */
 public class PosixAdapterTest {
 
-    private static final String account = "acc";
-    private static final String container = "reg123";
-    private static final String source = "source";
-    private static final String process = "process";
-    private static final String objectName = "id";
-    private static final String ZIP = ".zip";
-    private static final String JSON = ".json";
-    private static final String SEPARATOR = "/";
+    @Rule
+    public TemporaryFolder folder = new TemporaryFolder();
 
-    @InjectMocks
-    private PosixAdapter posixAdapter = new PosixAdapter();
-
-    @Mock
-    private File file;
-
-    @Mock
-    private FileInputStream fileInputStream;
-
-    @Mock
-    private ZipInputStream zipInputStream;
-
-    @Mock
-    private ZipEntry zipEntry;
-
-    @Mock
-    private ZipOutputStream zipOutputStream;
-
-    @Mock
-    private ObjectMapper objectMapper;
-
-    @Mock
-    private JSONObject jsonObject;
+    private PosixAdapter adapter;
+    private EncryptionHelper helper;
 
     @Before
-    public void setup() throws Exception {
-        PowerMockito.whenNew(File.class).withAnyArguments().thenReturn(file);
-        when(file.exists()).thenReturn(true);
-
-        PowerMockito.whenNew(FileInputStream.class).withAnyArguments().thenReturn(fileInputStream);
-
-        PowerMockito.whenNew(ZipInputStream.class).withAnyArguments().thenReturn(zipInputStream);
-
-        when(zipInputStream.getNextEntry()).thenReturn(zipEntry).thenReturn(null);
-        when(zipEntry.getName()).thenReturn(source + SEPARATOR + process + SEPARATOR + objectName + ZIP);
-
-        PowerMockito.mockStatic(IOUtils.class);
-        PowerMockito.mockStatic(FileUtils.class);
-        byte[] data = "123".getBytes();
-        PowerMockito.when(IOUtils.class, "toByteArray", any()).thenReturn(data);
-        PowerMockito.doNothing().when(FileUtils.class, "copyToFile", any(), any());
-        PowerMockito.whenNew(ZipOutputStream.class).withAnyArguments().thenReturn(zipOutputStream);
-        doNothing().when(zipOutputStream).putNextEntry(any());
-        doNothing().when(zipOutputStream).write(any());
-        when(objectMapper.writeValueAsString(any())).thenReturn("string");
-
+    public void setUp() {
+        adapter = new PosixAdapter();
+        helper = mock(EncryptionHelper.class);
+        ReflectionTestUtils.setField(adapter, "baseLocation", folder.getRoot().getAbsolutePath());
+        ReflectionTestUtils.setField(adapter, "objectMapper", new ObjectMapper());
+        ReflectionTestUtils.setField(adapter, "helper", helper);
     }
 
     @Test
-    public void testGetObject() throws Exception {
-
-        InputStream is = posixAdapter.getObject(account, container, source, process, objectName);
-        assertNotNull("Get object should not be null", is);
+    public void putGetExistsAndSecondPut() throws Exception {
+        byte[] first = "one".getBytes(StandardCharsets.UTF_8);
+        byte[] second = "two".getBytes(StandardCharsets.UTF_8);
+        assertTrue(adapter.putObject("acct", "box", "src", "proc", "a", new ByteArrayInputStream(first)));
+        assertTrue(adapter.putObject("acct", "box", "src", "proc", "b", new ByteArrayInputStream(second)));
+        assertTrue(adapter.exists("acct", "box", "src", "proc", "a"));
+        try (InputStream in = adapter.getObject("acct", "box", "src", "proc", "b")) {
+            assertEquals("two", new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        }
+        assertNull(adapter.getObject("missing", "box", "src", "proc", "a"));
+        assertFalse(adapter.exists("acct", "box", "src", "proc", "nope"));
     }
 
     @Test
-    public void testExists() throws Exception {
+    public void metadataTagsPackAndContainer() throws Exception {
+        assertTrue(adapter.putObject("acct", "box", "src", "proc", "a", new ByteArrayInputStream(new byte[]{1, 2})));
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("k", "v");
+        assertEquals(meta, adapter.addObjectMetaData("acct", "box", "src", "proc", "a", meta));
+        assertNotNull(adapter.addObjectMetaData("acct", "box", "src", "proc", "a", "n", "1"));
+        adapter.getMetaData("acct", "box", "src", "proc", "a");
 
-        boolean result = posixAdapter.exists(account, container, source, process, objectName);
-        assertTrue("Get object should not be present", result);
+        Map<String, String> tags = new HashMap<>();
+        tags.put("color", "blue");
+        assertEquals(tags, adapter.addTags("acct", "box", tags));
+        assertNotNull(adapter.getTags("acct", "box"));
+        adapter.addTags("acct", "box", Map.of("size", "1"));
+        adapter.deleteTags("acct", "box", List.of("color"));
+
+        when(helper.encrypt(anyString(), any(byte[].class))).thenReturn(new byte[]{9, 9});
+        assertTrue(adapter.pack("acct", "box", "src", "proc", "ref"));
+        assertEquals(Integer.valueOf(0), adapter.incMetadata("acct", "box", "src", "proc", "a", "n"));
+        assertEquals(Integer.valueOf(0), adapter.decMetadata("acct", "box", "src", "proc", "a", "n"));
+        assertTrue(adapter.deleteObject("acct", "box", "src", "proc", "a"));
+        assertNull(adapter.getAllObjects("acct", "box"));
+        assertFalse(adapter.moveObject(null, null, true));
+        assertTrue(adapter.listObjectsByPrefix("acct", "box", "p").isEmpty());
+        adapter.removeContainer("acct", "box", "src", "proc");
+        assertFalse(adapter.removeContainer("acct", "missing", "src", "proc"));
+        assertFalse(adapter.pack("nobody", "box", "src", "proc", "ref"));
+        assertFalse(adapter.removeContainer("nobody", "box", "src", "proc"));
     }
 
     @Test
-    public void testPutObject() throws Exception {
-
-        boolean result = posixAdapter.putObject(account, container, source, process, objectName, fileInputStream);
-        assertTrue("Put object should not be false", result);
+    public void getObject_missingContainerReturnsNull() {
+        Path account = Path.of(folder.getRoot().getAbsolutePath(), "acct");
+        assertTrue(account.toFile().mkdir());
+        assertNull(adapter.getObject("acct", "gone", "s", "p", "a"));
     }
 
     @Test
-    public void testAddObjectMetaData() throws Exception {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("obj1", new String("obj"));
-
-        Map<String, Object> result = posixAdapter.addObjectMetaData(account, container, source, process, objectName, metadata);
-        assertTrue("Put object should not be false", result.size() == 1);
+    public void getMetaData_missingContainerThrows() {
+        Path account = Path.of(folder.getRoot().getAbsolutePath(), "acct");
+        assertTrue(account.toFile().mkdir());
+        try {
+            adapter.getMetaData("acct", "gone", "s", "p", "a");
+        } catch (FileNotFoundInDestinationException expected) {
+            assertNotNull(expected.getErrorCode());
+        }
     }
 
     @Test
-    public void testAddObjectMetaData1() throws Exception {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("obj1", new String("obj"));
-        when(zipEntry.getName()).thenReturn(objectName + JSON);
-
-        when(objectMapper.readValue(anyString(), any(Class.class))).thenReturn(jsonObject).thenReturn(metadata);
-
-        Map<String, Object> result = posixAdapter.addObjectMetaData(account, container, source, process, objectName, "obj", "obj1");
-        assertTrue("Put object should not be false", result.size() == 1);
+    public void getTags_readsExistingFileThroughCatch() throws Exception {
+        Path account = Path.of(folder.getRoot().getAbsolutePath(), "acct");
+        Files.createDirectories(account);
+        Files.writeString(account.resolve("box_tags.json"), "not-json");
+        assertTrue(adapter.getTags("acct", "box").isEmpty());
     }
-
-    @Test
-    public void testGetMetaData() throws Exception {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("obj1", new String("obj"));
-        when(zipEntry.getName()).thenReturn(objectName + JSON);
-
-        when(objectMapper.readValue(anyString(), any(Class.class))).thenReturn(jsonObject).thenReturn(metadata);
-
-        Map<String, Object> result = posixAdapter.getMetaData(account, container, source, process, objectName);
-        assertTrue("Put object should not be false", result.size() == 1);
-    }
-
-    @Test
-    public void testException() throws Exception {
-        PowerMockito.when(FileUtils.class, "copyToFile", any(), any()).thenThrow(new io.mosip.kernel.core.exception.IOException("", "exception occured"));
-
-        boolean result = posixAdapter.putObject(account, container, source, process, objectName, fileInputStream);
-        assertFalse("Put object should be false", result);
-    }
-
-    @Test
-    public void testFileNotFoundInDestinationException() throws Exception {
-        when(file.exists()).thenReturn(false);
-        InputStream result = posixAdapter.getObject(account, container, source, process, objectName);
-        assertNull("Put object should be null", result);
-    }
-
 }

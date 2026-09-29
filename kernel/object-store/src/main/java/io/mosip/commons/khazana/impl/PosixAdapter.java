@@ -40,23 +40,77 @@ import io.mosip.commons.khazana.util.EncryptionHelper;
 import io.mosip.commons.khazana.util.ObjectStoreUtil;
 import io.mosip.kernel.core.util.FileUtils;
 
+/**
+ * Filesystem implementation of {@link ObjectStoreAdapter}, selected with
+ * {@code @Qualifier("PosixAdapter")}.
+ * <p>
+ * Each container is one zip: {@code {object.store.base.location}/{account}/{container}.zip}.
+ * An object entry is {@code source/process/objectName.zip}. Metadata is
+ * {@code source/process/objectName.json}. Tags live beside the zip in
+ * {@code {account}/{container}_tags.json}, not inside it.
+ * {@link #pack} encrypts that zip in place through {@link EncryptionHelper}.
+ * {@link #incMetadata} and {@link #decMetadata} return {@code 0}.
+ * {@link #getAllObjects} returns {@code null}. {@code listObjectsByPrefix} and
+ * {@code moveObject} use the SPI defaults.
+ */
 @Service
 @Qualifier("PosixAdapter")
 public class PosixAdapter implements ObjectStoreAdapter {
 
+    /**
+     * SLF4J logger. The logger name is {@code SwiftAdapter} as declared in source.
+     */
     private static final Logger LOGGER = LoggerFactory.getLogger(SwiftAdapter.class);
+
+    /**
+     * Path separator between the base location, account, and container file.
+     */
     private static final String SEPARATOR = "/";
+
+    /**
+     * Suffix for the container zip and for object entries inside it.
+     */
     private static final String ZIP = ".zip";
+
+    /**
+     * Suffix for metadata entries inside the zip and for the tags file beside it.
+     */
     private static final String JSON = ".json";
+
+    /**
+     * Infix of the tags file name: {@code {container}_tags.json}.
+     */
 	private static final String TAGS = "_tags";
+
+    /**
+     * Jackson mapper used to read metadata and tag JSON.
+     */
     @Autowired
     private ObjectMapper objectMapper;
+
+    /**
+     * Directory that holds account folders.
+     * Property {@code object.store.base.location}, default {@code home}.
+     */
     @Value("${object.store.base.location:home}")
     private String baseLocation;
 
+    /**
+     * Encrypts the container zip during {@link #pack}.
+     */
     @Autowired
     private EncryptionHelper helper;
 
+    /**
+     * Reads {@code source/process/objectName.zip} from the container zip.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name, without {@code .zip}
+     * @return entry bytes, or {@code null} when the account, container, or entry is missing
+     */
     public InputStream getObject(String account, String container, String source, String process, String objectName) {
         try {
             File accountLoc = new File(baseLocation + SEPARATOR + account);
@@ -84,10 +138,31 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return null;
     }
 
+    /**
+     * Reports whether {@link #getObject} finds an entry.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name, without {@code .zip}
+     * @return {@code true} when the object entry is present
+     */
     public boolean exists(String account, String container, String source, String process, String objectName) {
         return getObject(account, container, source, process, objectName) != null;
     }
 
+    /**
+     * Stores {@code data} as {@code objectName.zip} inside the container zip.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name; {@code .zip} is appended
+     * @param data       entry bytes
+     * @return {@code true} when the zip was written; {@code false} when writing fails
+     */
     public boolean putObject(String account, String container, String source, String process, String objectName, InputStream data) {
         try {
             createContainerZipWithSubpacket(account, container, source, process, objectName + ZIP, data);
@@ -98,6 +173,19 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return false;
     }
 
+    /**
+     * Writes metadata as {@code objectName.json} inside the container zip.
+     * <p>
+     * Existing metadata keys are copied onto the new JSON before it is stored.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name; {@code .json} is appended
+     * @param metadata   metadata to store
+     * @return {@code metadata}
+     */
     public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, Map<String, Object> metadata) {
         try {
             JSONObject jsonObject = objectMetadata(account, container, source, process, objectName, metadata);
@@ -109,6 +197,18 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return metadata;
     }
 
+    /**
+     * Stores a single metadata entry as {@code objectName.json}.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name; {@code .json} is appended
+     * @param key        metadata key
+     * @param value      metadata value
+     * @return a one-entry map, or {@code null} when writing fails
+     */
     public Map<String, Object> addObjectMetaData(String account, String container, String source, String process, String objectName, String key, String value) {
         try {
             Map<String, Object> metaMap = new HashMap<>();
@@ -124,6 +224,17 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return null;
     }
 
+    /**
+     * Reads {@code objectName.json} from the container zip.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment; not used when matching the entry name
+     * @param process    process path segment; not used when matching the entry name
+     * @param objectName object name; the entry name must contain {@code objectName.json}
+     * @return parsed metadata, or {@code null} when the account or entry is missing
+     * @throws FileNotFoundInDestinationException when the container zip does not exist
+     */
     public Map<String, Object> getMetaData(String account, String container, String source, String process, String objectName) {
         Map<String, Object> metaMap = null;
         try {
@@ -154,6 +265,19 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return metaMap;
     }
 
+    /**
+     * Creates or rewrites the container zip, adding one entry named
+     * {@code source/process/objectName}.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment of the new entry
+     * @param process    process path segment of the new entry
+     * @param objectName entry file name, including {@code .zip} or {@code .json}
+     * @param data       entry bytes
+     * @throws io.mosip.kernel.core.exception.IOException when the zip cannot be copied onto the container file
+     * @throws IOException when the existing zip cannot be read
+     */
     private void createContainerZipWithSubpacket(String account, String container, String source, String process, String objectName, InputStream data) throws io.mosip.kernel.core.exception.IOException, IOException {
         File accountLocation = new File(baseLocation + SEPARATOR + account);
         if (!accountLocation.exists())
@@ -185,6 +309,17 @@ public class PosixAdapter implements ObjectStoreAdapter {
         FileUtils.copyToFile(new ByteArrayInputStream(out.toByteArray()), containerZip);
     }
 
+    /**
+     * Adds one zip entry whose name is {@code source/process/fileName}.
+     * <p>
+     * A null {@code data} array is skipped. I/O failures are logged.
+     *
+     * @param fileName        entry file name
+     * @param data            entry bytes; ignored when {@code null}
+     * @param zipOutputStream zip being written
+     * @param source          source path segment
+     * @param process         process path segment
+     */
     private void addEntryToZip(String fileName, byte[] data, ZipOutputStream zipOutputStream, String source, String process) {
         try {
             if (data != null) {
@@ -197,6 +332,13 @@ public class PosixAdapter implements ObjectStoreAdapter {
         }
     }
 
+    /**
+     * Reads every entry in {@code packetStream} into memory and closes the stream.
+     *
+     * @param packetStream container zip
+     * @return entries keyed by their {@link ZipEntry}
+     * @throws IOException when the zip cannot be read
+     */
     private Map<ZipEntry, ByteArrayOutputStream> getAllExistingEntries(InputStream packetStream) throws IOException {
         Map<ZipEntry, ByteArrayOutputStream> entries = new HashMap<>();
         try (ZipInputStream zis = new ZipInputStream(packetStream)) {
@@ -220,6 +362,17 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return entries;
     }
 
+    /**
+     * Builds metadata JSON, copying keys already stored for the object.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name whose existing metadata is merged
+     * @param metadata   new metadata; existing keys are added when absent from this map's JSON
+     * @return merged metadata JSON
+     */
     private JSONObject objectMetadata(String account, String container, String source, String process,
                                       String objectName, Map<String, Object> metadata) {
         JSONObject jsonObject = new JSONObject(metadata);
@@ -235,23 +388,64 @@ public class PosixAdapter implements ObjectStoreAdapter {
         return jsonObject;
     }
 
+    /**
+     * Not implemented. Always returns {@code 0}.
+     *
+     * @param account     account directory under {@link #baseLocation}
+     * @param container   container zip name, without {@code .zip}
+     * @param source      source path segment
+     * @param process     process path segment
+     * @param objectName  object name
+     * @param metaDataKey metadata key that would be incremented
+     * @return {@code 0}
+     */
     @Override
     public Integer incMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
         // TODO Auto-generated method stub
         return 0;
     }
 
+    /**
+     * Not implemented. Always returns {@code 0}.
+     *
+     * @param account     account directory under {@link #baseLocation}
+     * @param container   container zip name, without {@code .zip}
+     * @param source      source path segment
+     * @param process     process path segment
+     * @param objectName  object name
+     * @param metaDataKey metadata key that would be decremented
+     * @return {@code 0}
+     */
     @Override
     public Integer decMetadata(String account, String container, String source, String process, String objectName, String metaDataKey) {
         // TODO Auto-generated method stub
         return 0;
     }
 
+    /**
+     * Not implemented. Returns {@code true} without deleting the zip entry.
+     *
+     * @param account    account directory under {@link #baseLocation}
+     * @param container  container zip name, without {@code .zip}
+     * @param source     source path segment
+     * @param process    process path segment
+     * @param objectName object name
+     * @return {@code true}
+     */
     @Override
     public boolean deleteObject(String account, String container, String source, String process, String objectName) {
         return true;
     }
 
+    /**
+     * Deletes the container zip under the account directory.
+     *
+     * @param account   account directory under {@link #baseLocation}
+     * @param container container zip name, without {@code .zip}
+     * @param source    unused path segment
+     * @param process   unused path segment
+     * @return {@code true} when the zip was deleted; {@code false} when the account is missing or deletion fails
+     */
     @Override
     public boolean removeContainer(String account, String container, String source, String process) {
         try {
@@ -272,6 +466,16 @@ public class PosixAdapter implements ObjectStoreAdapter {
 
     }
 
+    /**
+     * Encrypts the container zip in place with {@link #helper} and {@code refId}.
+     *
+     * @param account   account directory under {@link #baseLocation}
+     * @param container container zip name, without {@code .zip}
+     * @param source    unused path segment
+     * @param process   unused path segment
+     * @param refId     reference id of the encryption key
+     * @return {@code true} when encryption returns a packet; {@code false} when the account is missing or encryption fails
+     */
     @Override
     public boolean pack(String account, String container, String source, String process, String refId) {
         try {
@@ -293,6 +497,14 @@ public class PosixAdapter implements ObjectStoreAdapter {
         }
     }
 
+	/**
+	 * Writes tags to {@code {account}/{container}_tags.json}, merging existing tags.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @param tags      tags to add
+	 * @return {@code tags}
+	 */
 	@Override
 	public Map<String, String> addTags(String account, String container, Map<String, String> tags) {
 		try {
@@ -304,6 +516,15 @@ public class PosixAdapter implements ObjectStoreAdapter {
 		return tags;
 	}
 
+	/**
+	 * Reads {@code {account}/{container}_tags.json}.
+	 * <p>
+	 * Creates the account directory and an empty tags file when they are missing.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @return tags from the file, or an empty map when the file is new or cannot be read
+	 */
 	@Override
 	public Map<String, String> getTags(String account, String container) {
 		Map<String, String> metaMap = new HashMap<String, String>();
@@ -334,6 +555,14 @@ public class PosixAdapter implements ObjectStoreAdapter {
 		return metaMap;
 	}
 
+	/**
+	 * Merges {@code tags} with tags already stored for the container.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @param tags      tags to add
+	 * @return merged tag JSON
+	 */
 	private JSONObject containterTagging(String account, String container, Map<String, String> tags) {
 		JSONObject jsonObject = new JSONObject(tags);
 		Map<String, String> existingTags = getTags(account, container);
@@ -348,6 +577,14 @@ public class PosixAdapter implements ObjectStoreAdapter {
 		return jsonObject;
 	}
 
+	/**
+	 * Writes {@code data} to {@code {account}/{container}_tags.json}, creating the account directory when needed.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @param data      tag JSON bytes
+	 * @throws IOException when the tags file cannot be written
+	 */
 	private void createContainerWithTagging(String account, String container, InputStream data) throws IOException {
 
 		File accountLocation = new File(baseLocation + SEPARATOR + account);
@@ -360,10 +597,24 @@ public class PosixAdapter implements ObjectStoreAdapter {
 
 	}
 
+    /**
+     * Not implemented. Always returns {@code null}.
+     *
+     * @param account   account directory under {@link #baseLocation}
+     * @param container container zip name, without {@code .zip}
+     * @return {@code null}
+     */
     public List<ObjectDto> getAllObjects(String account, String container) {
         return null;
     }
 
+	/**
+	 * Removes the named tags from {@code {account}/{container}_tags.json}.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @param tags      tag names to remove
+	 */
 	@Override
 	public void deleteTags(String account, String container, List<String> tags) {
 		try {
@@ -376,6 +627,14 @@ public class PosixAdapter implements ObjectStoreAdapter {
 
 	}
 
+	/**
+	 * Copies current tags and drops every name in {@code tags}.
+	 *
+	 * @param account   account directory under {@link #baseLocation}
+	 * @param container container name used in the tags file
+	 * @param tags      tag names to remove
+	 * @return remaining tags as JSON
+	 */
 	private JSONObject containterRemoveTagging(String account, String container,List<String> tags) {
 	
 		Map<String, String> existingTags = getTags(account, container);
