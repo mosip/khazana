@@ -1,103 +1,70 @@
-# AGENTS.md
+# Khazana
 
-This file provides guidance to AI agents when working with code in this repository.
+MOSIP object-store JAR (`io.mosip.commons:khazana`). Parent is `spring-boot-starter-parent` 4.1.1 (Java 21). Do not import `kernel-bom`. `kernel-core` is `1.4.1-SNAPSHOT`. Callers select an adapter with Spring `@Qualifier`: `S3Adapter`, `PosixAdapter`, or `SwiftAdapter`. Consumed by regclient, regproc, datashare, resident, idrepo. A signature or path-shape change breaks those callers.
 
-## What is Khazana
+Maven cwd is `kernel/`. Jar: `object-store/target/khazana-<version>.jar`.
 
-Khazana is the MOSIP Object Store library. It provides pluggable adapter implementations for connecting to different object storage backends. It is consumed as a dependency (JAR) by other MOSIP modules (regclient, regproc, datashare, resident, idrepo).
+- `mvn clean install`
+- `mvn clean install -DskipTests`
+- `cd object-store && mvn test`
+- `cd object-store && mvn test -Dtest=<Class>`
+- `mvn verify -Psonar` (needs `SONAR_TOKEN`)
 
-## Build Commands
+## Tree
 
-All Maven commands should be run from `kernel/` (the parent module):
-
-```bash
-# Build and run tests
-cd kernel && mvn clean install
-
-# Skip tests
-cd kernel && mvn clean install -DskipTests
-
-# Run tests for the object-store module only
-cd kernel/object-store && mvn test
-
-# Run a single test class
-cd kernel/object-store && mvn test -Dtest=PosixAdapterTest
-
-# Sonar analysis (requires SONAR_TOKEN)
-cd kernel && mvn verify -Psonar
-```
-
-The build produces `kernel/object-store/target/khazana-<version>.jar`.
-
-## Project Structure
+Read only the branch for the files you are changing.
 
 ```
-kernel/
-  pom.xml                  # Parent POM (khazana-parent, groupId: io.mosip.commons)
-  object-store/
-    pom.xml                # Module POM (artifactId: khazana)
-    src/main/java/io/mosip/commons/khazana/
-      spi/ObjectStoreAdapter.java   # The core interface all adapters implement
-      impl/
-        S3Adapter.java              # S3/MinIO adapter (primary production adapter)
-        PosixAdapter.java           # Flat-file adapter (stores as zip files)
-        SwiftAdapter.java           # OpenStack Swift adapter (not fully tested)
-      util/
-        ObjectStoreUtil.java        # Builds object paths from (source, process, objectName)
-        SafeS3InputStream.java      # Wraps S3Object stream to ensure proper close
-        EncryptionHelper.java       # Handles encrypt/decrypt for PosixAdapter pack()
-      constant/KhazanaConstant.java
-      constant/KhazanaErrorCodes.java
-      exception/ObjectStoreAdapterException.java
-    src/test/
-      resources/application-test.properties  # Test config for all adapters
+khazana
+├── spi        ObjectStoreAdapter, ObjectStoreUtil, constant/, exception/
+├── s3         S3Adapter, S3PoolStatsLogger, SafeS3InputStream
+├── posix      PosixAdapter, Encryption*, *CryptoUtil
+└── swift      SwiftAdapter
 ```
 
-## Architecture
+### spi
 
-**`ObjectStoreAdapter` SPI** — single interface with methods: `getObject`, `putObject`, `exists`, `deleteObject`, `addObjectMetaData`, `getMetaData`, `incMetadata`, `decMetadata`, `removeContainer`, `pack`, `getAllObjects`, `addTags`, `getTags`, `deleteTags`.
+Methods: `getObject`, `putObject`, `exists`, `deleteObject`, `addObjectMetaData`, `getMetaData`, `incMetadata`, `decMetadata`, `removeContainer`, `pack`, `getAllObjects`, `addTags`, `getTags`, `deleteTags`, `moveObject`, `listObjectsByPrefix`.
 
-Callers inject the adapter by Spring `@Qualifier` name: `"S3Adapter"`, `"PosixAdapter"`, or `"SwiftAdapter"`. The desired adapter is chosen at the application level by the consuming service.
+`moveObject` defaults to false. `listObjectsByPrefix` defaults to an empty list (never null). Bundled adapters use those defaults. An empty list is not a failure; storage errors throw `ObjectStoreAdapterException`.
 
-**Object path construction** — `ObjectStoreUtil.getName(source, process, objectName)` builds the path `source/process/objectName` (any segment can be null/empty and is omitted). When `object.store.s3.use.account.as.bucketname=true`, the container is also prepended and the S3 bucket is the account name instead of the container name.
+`ObjectStoreUtil.getName` skips a null or empty segment and joins the rest with `/`.
 
-**S3Adapter specifics:**
-- Maintains a singleton `AmazonS3` connection; on any exception it calls `shutdownConnection()` to reset it so the next call retries.
-- Retries connection up to `object.store.connection.max.retry` (default 20) attempts.
-- Bucket names are always lowercased (S3 requirement).
-- Optional `object.store.s3.bucket-name-prefix` is prepended to every bucket name.
-- Tags are stored as individual S3 objects under a `Tags/` prefix (not as native S3 object tags).
-- `removeContainer` and `pack` are no-ops (return false) in S3Adapter.
-- Implements `DisposableBean` to shut down the connection pool on Spring context close.
+```
+getName("src", "", "a")           → src/a
+getName("acct", "src", "p", "a")  → acct/src/p/a
+```
 
-**PosixAdapter specifics:**
-- Stores each container as a ZIP file at `{base.location}/{account}/{container}.zip`.
-- Objects inside the ZIP are named `source/process/objectName.zip`; metadata is stored as `source/process/objectName.json`.
-- Tags are stored as a separate JSON file: `{account}/{container}_tags.json`.
-- `pack()` encrypts the container ZIP in place using `EncryptionHelper`.
-- `incMetadata`/`decMetadata` are stubbed (return 0).
-- `getAllObjects` returns null (not implemented).
+### s3
 
-**SwiftAdapter** — connects to OpenStack Swift via JOSS library. Per source comment: "has not been tested."
+Primary adapter. AWS SDK 1.x (`com.amazonaws`). One shared `AmazonS3` client. On any exception set `connection = null` so the next call rebuilds it. Retry cap: `object.store.connection.max.retry` (20).
 
-## Key Configuration Properties
+- Lowercase every bucket name. Prepend `object.store.s3.bucket-name-prefix` when set.
+- `use.account.as.bucketname=false` (default): bucket is the container. `true`: bucket is the account and the key is `container/` + object name.
+- Tags are objects under `Tags/`, not native S3 object tags.
+- `removeContainer` and `pack` return false.
+- Close S3 bodies through `SafeS3InputStream`.
+- `S3PoolStatsLogger` is AWS SDK 2.x `MetricPublisher` only.
 
-| Property | Default | Description |
-|---|---|---|
-| `object.store.s3.accesskey` | `accesskey` | S3 access key |
-| `object.store.s3.secretkey` | `secretkey` | S3 secret key |
-| `object.store.s3.url` | `null` | S3 endpoint URL |
-| `object.store.s3.region` | `null` | S3 region |
-| `object.store.s3.use.account.as.bucketname` | `false` | Use account param as bucket name |
-| `object.store.s3.bucket-name-prefix` | `` | Prefix added to all bucket names |
-| `object.store.s3.readlimit` | `10000000` | Read limit for metadata re-upload |
-| `object.store.connection.max.retry` | `20` | Max S3 connection retries |
-| `object.store.max.connection` | `200` | S3 HTTP connection pool size |
-| `object.store.connection.timeout` | `5000` | S3 connection timeout (ms) |
-| `object.store.socket.timeout` | `10000` | S3 socket timeout (ms) |
-| `object.store.client.execution.timeout` | `15000` | S3 client execution timeout (ms) |
-| `object.store.base.location` | `home` | Base filesystem path for PosixAdapter |
-| `object.store.swift.username` | `test` | Swift username |
-| `object.store.swift.password` | `test` | Swift password |
-| `object.store.swift.url` | `null` | Swift auth URL |
+Defaults: accesskey/secretkey `accesskey`/`secretkey`, url/region null, readlimit `10000000`, stream.buffer.size `8192`, max.connection `200`, connection.timeout `5000`, socket.timeout `10000`, client.execution.timeout `15000`.
 
+Test: `mvn test -Dtest=S3AdapterTest`
+
+### posix
+
+Each container is one zip: `{object.store.base.location}/{account}/{container}.zip` (default base `home`).
+
+- Entry name: `source/process/objectName.zip`. Metadata: `source/process/objectName.json`.
+- Tags: `{account}/{container}_tags.json` beside the zip, not inside it.
+- `pack()` encrypts that zip in place via `EncryptionHelper` (needs `kernel-keymanager-service` 1.4.1-rc.1 classifier `lib`).
+- `incMetadata` / `decMetadata` return 0. `getAllObjects` returns null.
+
+Test: `mvn test -Dtest=PosixAdapterTest`
+
+### swift
+
+OpenStack Swift via JOSS. Source marks this adapter as not tested.
+
+`@Value` fields are plain strings (`object.store.swift.username:test`, same shape for password and url). They are not `${...}` placeholders, so they do not read Spring properties.
+
+Accounts are cached in a `Map<String, Account>`.
