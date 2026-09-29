@@ -1,145 +1,160 @@
 THIRD-PARTY-NOTICES
 
-This project includes third-party packages that are distributed under various open-source licenses. Below is a list of packages and their associated licenses.
+This project includes third-party packages distributed under various open-source licenses.
+
+Reactor: io.mosip.commons:khazana-parent 1.4.1-SNAPSHOT
+Artifact: io.mosip.commons:khazana 1.4.1-SNAPSHOT
+Parent: org.springframework.boot:spring-boot-starter-parent 4.1.1 (Java 21)
+Policy: no kernel-bom. kernel-core is pinned directly. See licenses/NOTICE for the MOSIP MPL compatibility matrix.
+Resolved from Maven Central / local snapshots on 2026-09-29.
 
 ================================================================================
-Package: Maven Jar Plugin
-Version: 3.0.2
-License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-jar-plugin/
-================================================================================
-
-================================================================================
-Package: Maven Javadoc Plugin
-Version: 3.2.0
-License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-javadoc-plugin/
-================================================================================
-
-================================================================================
-Package: Maven Surefire Plugin
-Version: 2.22.0
-License: Apache License 2.0
-Homepage: https://maven.apache.org/surefire/maven-surefire-plugin/
+Package: MOSIP Khazana (this repository)
+Artifacts: khazana-parent, khazana
+Version: 1.4.1-SNAPSHOT
+License: Mozilla Public License 2.0
+Copyright: (c) 2018-2026 MOSIP
+Homepage: https://github.com/mosip/khazana
 ================================================================================
 
 ================================================================================
-Package: Maven Compiler Plugin
-Version: 3.8.0
-License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-compiler-plugin/
+Package: MOSIP Kernel Core (io.mosip.kernel:kernel-core)
+Version: 1.4.1-SNAPSHOT
+License: Mozilla Public License 2.0
+Copyright: (c) 2018-2026 MOSIP
+Homepage: https://github.com/mosip/commons
+Note: Pinned via kernel.core.version. Logger (Logfactory) is folded into this JAR.
+      Not imported via kernel-bom.
 ================================================================================
 
 ================================================================================
-Package: Maven Source Plugin
-Version: 2.2.1
-License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-source-plugin/
+Package: MOSIP Kernel Keymanager Service (io.mosip.kernel:kernel-keymanager-service)
+Version: 1.4.1-rc.1 (classifier lib)
+License: Mozilla Public License 2.0
+Copyright: (c) 2018-2026 MOSIP
+Homepage: https://github.com/mosip/keymanager
+Note: Latest published artifact. No 1.4.1-SNAPSHOT is available.
+      CryptomanagerService for PosixAdapter.pack offline encryption.
+      Transitive kernel-core is excluded so 1.4.1-SNAPSHOT wins.
 ================================================================================
 
 ================================================================================
-Package: Maven GPG Plugin
-Version: 1.5
+Package: Spring Boot
+(spring-boot-starter-parent, spring-boot-starter, spring-boot-starter-test)
+Version: 4.1.1
 License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-gpg-plugin/
-================================================================================
-
-================================================================================
-Package: Maven WAR Plugin
-Version: 3.1.0
-License: Apache License 2.0
-Homepage: https://maven.apache.org/plugins/maven-war-plugin/
-================================================================================
-
-================================================================================
-Package: Spring Boot Maven Plugin
-Version: 3.2.3
-License: Apache License 2.0
+Copyright: (c) 2012-2026 VMware, Inc.
 Homepage: https://spring.io/projects/spring-boot
 ================================================================================
 
 ================================================================================
-Package: Central Publishing Maven Plugin
-Version: 0.11.0
+Package: Spring Framework
+(spring-context, spring-web, spring-beans, spring-core, …)
+Version: 7.0.9 (via Boot 4.1.1)
 License: Apache License 2.0
-Homepage: https://central.sonatype.org/publish/
+Copyright: (c) 2002-2026 Pivotal, Inc.
+Homepage: https://spring.io/projects/spring-framework
 ================================================================================
 
 ================================================================================
-Package: Lombok
-Version: Not specified
-License: MIT License (Inferred from project’s official repository)
-Homepage: https://projectlombok.org/
+Package: Spring Security (transitive via kernel-core)
+Version: 7.1.1 (via Boot 4.1.1)
+License: Apache License 2.0
+Homepage: https://spring.io/projects/spring-security
 ================================================================================
 
 ================================================================================
-Package: JUnit Vintage Engine
-Version: Not specified
-License: EPL-2.0 (Inferred from JUnit 5 project)
-Homepage: https://junit.org/junit5/
+Package: Jackson 2
+(jackson-databind and modules pulled by kernel-core / Boot)
+Version: 2.21.5
+License: Apache License 2.0
+Copyright: 2007-, Tatu Saloranta
+Homepage: https://github.com/FasterXML/jackson
 ================================================================================
 
 ================================================================================
-Package: PowerMock API Mockito2
-Version: Not specified
-License: Apache License 2.0 (Inferred from project’s official repository)
-Homepage: https://github.com/powermock/powermock
+Package: AWS SDK for Java 1.x (com.amazonaws:aws-java-sdk-s3)
+Version: 1.12.797
+License: Apache License 2.0
+Copyright: Amazon.com, Inc. or its affiliates
+Homepage: https://aws.amazon.com/sdk-for-java/
+Note: S3Adapter and SafeS3InputStream use the 1.x AmazonS3 API.
 ================================================================================
 
 ================================================================================
-Package: PowerMock Module JUnit4
-Version: Not specified
-License: Apache License 2.0 (Inferred)
-Homepage: https://github.com/powermock/powermock
+Package: AWS SDK for Java 2.x (software.amazon.awssdk:s3, apache-client)
+Version: 2.55.7
+License: Apache License 2.0
+Copyright: Amazon.com, Inc. or its affiliates
+Homepage: https://github.com/aws/aws-sdk-java-v2
+Note: S3PoolStatsLogger MetricPublisher only. The S3 data path stays on SDK 1.x.
 ================================================================================
 
 ================================================================================
-Package: S3Mock (Findify)
-Version: 0.2.4
-License: MIT
-Homepage: https://github.com/findify/s3mock
-================================================================================
-
-================================================================================
-Package: JOSS (Java OpenStack Storage)
-Version: 0.10.2
+Package: JOSS (org.javaswift:joss)
+Version: 0.10.4
 License: Apache License 2.0
 Homepage: https://github.com/javaswift/joss
 ================================================================================
 
 ================================================================================
-Package: Mockito Core
-Version: 3.3.3
+Package: Apache Commons IO (commons-io:commons-io)
+Version: 2.22.0
+License: Apache License 2.0
+Copyright: 2002-2026 The Apache Software Foundation
+Homepage: https://commons.apache.org/proper/commons-io/
+================================================================================
+
+================================================================================
+Package: Apache Commons Lang (org.apache.commons:commons-lang3)
+Version: 3.20.0
+License: Apache License 2.0
+Copyright: 2001-2025 The Apache Software Foundation
+Homepage: https://commons.apache.org/proper/commons-lang/
+================================================================================
+
+================================================================================
+Package: JSON-java (org.json:json)
+Version: 20260814
+License: Public Domain (declared in the artifact POM)
+Copyright: JSON.org (upstream); this release's POM states Public Domain
+Homepage: https://github.com/stleary/JSON-java
+Note: PosixAdapter metadata and tag files.
+================================================================================
+
+================================================================================
+Package: Project Lombok (org.projectlombok:lombok)
+Version: managed by Spring Boot 4.1.1
+License: MIT
+Copyright: (C) 2009-2021 The Project Lombok Authors
+Homepage: https://projectlombok.org/
+Scope: provided (DTO codegen)
+================================================================================
+
+================================================================================
+Package: JUnit 5 vintage engine (org.junit.vintage:junit-vintage-engine)
+Version: managed by Spring Boot 4.1.1
+License: Eclipse Public License 2.0
+Homepage: https://junit.org/junit5/
+Scope: test
+================================================================================
+
+================================================================================
+Package: Mockito (org.mockito:mockito-core)
+Version: managed by Spring Boot 4.1.1
 License: MIT
 Homepage: https://site.mockito.org/
+Scope: test
 ================================================================================
 
-================================================================================
-Package: AWS Java SDK
-Version: 1.11.368
-License: Apache License 2.0
-Homepage: https://aws.amazon.com/sdk-for-java/
-================================================================================
+Build plugins (not shipped inside the khazana JAR):
 
-================================================================================
-Package: MOSIP Kernel Core
-Version: 1.3.0-SNAPSHOT
-License: MPL-2.0 (Inferred from MOSIP repositories)
-Homepage: https://github.com/mosip/mosip-kernel
-================================================================================
+- maven-compiler-plugin 3.16.0, maven-surefire-plugin 3.6.0, maven-jar-plugin 3.5.1 — Apache-2.0
+- jacoco-maven-plugin 0.8.15 — Eclipse Public License 2.0
+- maven-javadoc-plugin 3.12.0, maven-source-plugin 3.4.0, maven-deploy-plugin 3.1.4, maven-gpg-plugin 3.2.8 — Apache-2.0
+- sonar-maven-plugin 5.8.0.7211 — LGPL-3.0-only (build-time scanner only)
+- git-commit-id-plugin 4.9.10 — LGPL-3.0-only (build-time only)
+- central-publishing-maven-plugin 0.11.0 — Apache-2.0
 
-================================================================================
-Package: MOSIP Kernel BOM
-Version: 1.3.0-SNAPSHOT
-License: MPL-2.0 (Inferred)
-Homepage: https://github.com/mosip/mosip-kernel
-================================================================================
-
-================================================================================
-Package: MOSIP Kernel Keymanager Service
-Version: 1.3.0-SNAPSHOT
-License: MPL-2.0 (Inferred)
-Homepage: https://github.com/mosip/mosip-kernel
-================================================================================
-
-Full license texts and additional details for each of the above packages are available in the license/ directory of this repository. Please refer to those files or the original source of each package for complete legal terms and conditions.
+Full license texts: licenses/Apache-2.0.txt, licenses/MIT.txt, licenses/EPL-2.0.txt,
+licenses/MPL-2.0.txt, licenses/LGPL-3.0-only.txt.

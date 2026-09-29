@@ -1,106 +1,44 @@
-MOSIP
-Copyright (c) 2022
+MOSIP Khazana
+Copyright (c) 2018-2026 MOSIP
 Modular Open Source Identity Platform
+All rights reserved.
 
-This project includes software developed at
-The Apache Software Foundation (http://www.apache.org/).
+This product is licensed under the Mozilla Public License 2.0 (see LICENSE).
+Parent: spring-boot-starter-parent 4.1.1, Java 21.
+kernel-bom is not used. kernel-core is pinned to 1.4.1-SNAPSHOT.
 
-Third-party attributions:
+This product includes software developed at
+The Apache Software Foundation (https://www.apache.org/).
+Copyright 2004 The Apache Software Foundation (Apache License, Version 2.0).
 
-This product bundles open-source components distributed under their respective
-licenses. Attribution and license details for each component are listed below.
+Copyright notices for bundled and transitive components (years taken from
+each component's own NOTICE or LICENSE):
 
+  Spring Boot 4.1.1
+    Copyright (c) 2012-2026 VMware, Inc.  Apache License 2.0
 
--------------------------------------------------------------------------------
-Apache License 2.0 Components
--------------------------------------------------------------------------------
+  Spring Framework 7.0.9
+    Copyright (c) 2002-2026 Pivotal, Inc.  Apache License 2.0
 
-This product contains components licensed under the Apache License 2.0:
+  Apache Commons IO 2.22.0
+    Copyright 2002-2026 The Apache Software Foundation
 
-• Maven JAR Plugin  
-  https://maven.apache.org/plugins/maven-jar-plugin/
+  Apache Commons Lang 3.20.0
+    Copyright 2001-2025 The Apache Software Foundation
 
-• Maven Javadoc Plugin  
-  https://maven.apache.org/plugins/maven-javadoc-plugin/
+  Jackson 2.21.5
+    Copyright 2007-, Tatu Saloranta  Apache License 2.0
 
-• Maven Surefire Plugin  
-  https://maven.apache.org/surefire/maven-surefire-plugin/
+  Project Lombok 1.18.46
+    Copyright (C) 2009-2021 The Project Lombok Authors  MIT License
 
-• Maven Compiler Plugin  
-  https://maven.apache.org/plugins/maven-compiler-plugin/
+  Bouncy Castle bcprov 1.85.2 (transitive via kernel-core)
+    Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc.  MIT License
 
-• Maven Source Plugin  
-  https://maven.apache.org/plugins/maven-source-plugin/
+  MOSIP kernel-core 1.4.1-SNAPSHOT
+  MOSIP kernel-keymanager-service 1.4.1-rc.1
+    Copyright (c) 2018-2026 MOSIP  Mozilla Public License 2.0
 
-• Maven GPG Plugin  
-  https://maven.apache.org/plugins/maven-gpg-plugin/
-
-• Maven WAR Plugin  
-  https://maven.apache.org/plugins/maven-war-plugin/
-
-• Git Commit ID Maven Plugin  
-  https://github.com/git-commit-id/git-commit-id-maven-plugin
-
-• Spring Boot Maven Plugin  
-  https://spring.io/projects/spring-boot
-
-• Central Publishing Maven Plugin  
-  https://central.sonatype.org/publish/
-
-• JOSS – Java OpenStack Storage  
-  https://github.com/javaswift/joss
-
-• AWS Java SDK  
-  https://aws.amazon.com/sdk-for-java/
-
--------------------------------------------------------------------------------
-MIT License Components
--------------------------------------------------------------------------------
-
-• Lombok  
-  https://projectlombok.org/
-
-• Mockito Core  
-  https://site.mockito.org/
-
-• S3Mock (Findify)  
-  https://github.com/findify/s3mock
-
--------------------------------------------------------------------------------
-Eclipse Public License Components
--------------------------------------------------------------------------------
-
-• JUnit Vintage Engine (EPL-2.0)  
-  https://junit.org/junit5/
-
--------------------------------------------------------------------------------
-Mozilla Public License 2.0 Components (MPL-2.0)
--------------------------------------------------------------------------------
-
-This product includes MOSIP components licensed under MPL-2.0:
-
-• MOSIP Kernel Core  
-  https://github.com/mosip/mosip-kernel
-
-• MOSIP Kernel BOM  
-  https://github.com/mosip/mosip-kernel
-
-• MOSIP Kernel Keymanager Service  
-  https://github.com/mosip/mosip-kernel
-
--------------------------------------------------------------------------------
-Apache License 2.0 Components (PowerMock)
--------------------------------------------------------------------------------
-
-• PowerMock API Mockito2  
-  https://github.com/powermock/powermock
-
-• PowerMock Module JUnit4  
-  https://github.com/powermock/powermock
-
--------------------------------------------------------------------------------
-
-Full license texts for all components listed above are available in the
-`license/` directory of this repository. For full legal terms and conditions,
-refer to the original component sources.
-
+Third-party attributions: THIRD-PARTY-NOTICES.txt
+License texts: licenses/
+MOSIP MPL 2.0 compatibility matrix and elections: licenses/NOTICE
