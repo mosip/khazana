@@ -1,167 +1,289 @@
 package io.mosip.commons.khazana.util;
 
+import com.amazonaws.services.s3.model.S3Object;
 import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.kernel.core.logger.spi.Logger;
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.io.IOException;
 import java.io.InputStream;
 
+import static io.mosip.commons.khazana.config.LoggerConfiguration.REGISTRATIONID;
+import static io.mosip.commons.khazana.config.LoggerConfiguration.SESSIONID;
+
 /**
- * Wraps SDK v2's ResponseInputStream&lt;GetObjectResponse&gt; to ensure proper resource
- * cleanup and prevent "connection not fully drained" issues in the Apache HTTP client pool.
- *
- * <p>Strategy on close():
- * <ul>
- *   <li>Fully consumed: close normally — HTTP connection returns to pool cleanly.</li>
- *   <li>Small remainder (&le; {@code DRAIN_THRESHOLD_BYTES}): drain to reuse the connection.</li>
- *   <li>Large remainder: abort() — drops the TCP connection rather than pulling megabytes
- *       of data over the wire just to discard them. Under 400 RPS this prevents latency spikes
- *       caused by N×large drains running concurrently.</li>
- * </ul>
+ * Wrapper class for S3ObjectInputStream to ensure proper resource cleanup
+ * and prevent "Not all bytes were read from the S3ObjectInputStream" warnings.
+ * <p>
+ * {@link io.mosip.commons.khazana.impl.S3Adapter#getObject} returns this stream.
+ * Callers must close it. {@link #close()} drains unread bytes (up to
+ * {@link #MAX_DRAIN_BYTES}), closes the delegate, and closes the {@link S3Object}
+ * so the HTTP connection returns to the pool.
+ * <p>
+ * This class:
+ * - Tracks if the stream has been fully read
+ * - Ensures the S3Object is properly closed
+ * - Prevents connection leaks
+ * - Provides content-length information
  */
 public class SafeS3InputStream extends InputStream {
 
+    /**
+     * Kernel logger for create, drain, and close messages.
+     */
     private static final Logger LOGGER = LoggerConfiguration.logConfig(SafeS3InputStream.class);
 
-    /** Drain up to this many bytes to reuse the HTTP connection. Above this, abort instead. */
-    private static final long DRAIN_THRESHOLD_BYTES = 256 * 1024; // 256 KB
-
-    private static final int DRAIN_BUFFER_SIZE = 8 * 1024; // 8 KB
-
-    /** Absolute safety cap so a bug can't cause an infinite drain loop. */
-    private static final long MAX_DRAIN_BYTES = 10 * 1024 * 1024; // 10 MB
+    /**
+     * S3 response that owns the HTTP connection. Closed by {@link #close()}.
+     */
+    private final S3Object s3Object;
 
     /**
-     * SDK v2: ResponseInputStream&lt;GetObjectResponse&gt; extends AbortableInputStream,
-     * which is itself an InputStream. It exposes abort() to drop the HTTP connection
-     * without draining, and response() for the S3 response metadata.
+     * Object-content stream delegated to for every read.
      */
-    private final ResponseInputStream<GetObjectResponse> responseStream;
-    private final long contentLength;
-    private long bytesRead = 0;
-    private boolean fullyClosed = false;
+    private final InputStream delegateStream;
 
-    public SafeS3InputStream(ResponseInputStream<GetObjectResponse> responseStream) {
-        this.responseStream = responseStream;
-        // contentLength() returns Long (nullable) — treat null as unknown (-1)
-        Long length = responseStream.response().contentLength();
-        this.contentLength = (length != null) ? length : -1L;
+    /**
+     * Content length from object metadata, or {@code -1} when unknown.
+     */
+    private final long contentLength;
+
+    /**
+     * Number of bytes read or drained so far.
+     */
+    private long bytesRead = 0;
+
+    /**
+     * Whether {@link #close()} has already run. Later reads fail; a second close is a no-op.
+     */
+    private boolean closed = false;
+
+    /**
+     * Size of the buffer used to drain unread bytes on close.
+     */
+    private static final int DRAIN_BUFFER_SIZE = 8192;
+
+    /**
+     * Maximum number of extra bytes {@link #close()} will drain before it stops.
+     */
+    private static final long MAX_DRAIN_BYTES = 10 * 1024 * 1024; // safety cap: 10 MB
+
+    /**
+     * Wraps an S3 object and records its content length.
+     *
+     * @param s3Object      open S3 object whose content stream is delegated
+     * @param contentLength metadata content length, or {@code -1} when unknown
+     */
+    public SafeS3InputStream(S3Object s3Object, long contentLength) {
+        this.s3Object = s3Object;
+        this.delegateStream = s3Object.getObjectContent();
+        this.contentLength = contentLength;
+        LOGGER.info(SESSIONID, REGISTRATIONID, "SafeS3InputStream created with contentLength: " + contentLength);
     }
 
+    /**
+     * Reads the next byte.
+     *
+     * @return the byte as an unsigned value {@code 0-255}, or {@code -1} at end of stream
+     * @throws IOException when this stream is already closed or the delegate read fails
+     */
     @Override
     public int read() throws IOException {
-        int b = responseStream.read();
-        if (b != -1) bytesRead++;
-        return b;
+        if (closed) {
+            throw new IOException("Stream is closed");
+        }
+        int byte_value = delegateStream.read();
+        if (byte_value != -1) {
+            bytesRead++;
+        }
+        return byte_value;
     }
 
+    /**
+     * Reads up to {@code b.length} bytes into {@code b}.
+     *
+     * @param b buffer to fill
+     * @return number of bytes read, or {@code -1} at end of stream
+     * @throws IOException when this stream is already closed or the delegate read fails
+     */
+    @Override
+    public int read(byte[] b) throws IOException {
+        if (closed) {
+            throw new IOException("Stream is closed");
+        }
+        int bytesReadFromStream = delegateStream.read(b);
+        if (bytesReadFromStream > 0) {
+            bytesRead += bytesReadFromStream;
+        }
+        return bytesReadFromStream;
+    }
+
+    /**
+     * Reads up to {@code len} bytes into {@code b} starting at {@code off}.
+     *
+     * @param b   buffer to fill
+     * @param off start offset in {@code b}
+     * @param len maximum number of bytes to read
+     * @return number of bytes read, or {@code -1} at end of stream
+     * @throws IOException when this stream is already closed or the delegate read fails
+     */
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
-        int n = responseStream.read(b, off, len);
-        if (n > 0) bytesRead += n;
-        return n;
+        if (closed) {
+            throw new IOException("Stream is closed");
+        }
+        int bytesReadFromStream = delegateStream.read(b, off, len);
+        if (bytesReadFromStream > 0) {
+            bytesRead += bytesReadFromStream;
+        }
+        return bytesReadFromStream;
     }
 
+    /**
+     * Skips up to {@code n} bytes.
+     *
+     * @param n number of bytes to skip
+     * @return number of bytes actually skipped
+     * @throws IOException when this stream is already closed or the delegate skip fails
+     */
     @Override
     public long skip(long n) throws IOException {
-        long skipped = responseStream.skip(n);
+        if (closed) {
+            throw new IOException("Stream is closed");
+        }
+        long skipped = delegateStream.skip(n);
         bytesRead += skipped;
         return skipped;
     }
 
+    /**
+     * Returns an estimate of bytes that can be read without blocking.
+     *
+     * @return bytes available from the delegate, or {@code 0} when this stream is closed
+     * @throws IOException when the delegate cannot report availability
+     */
     @Override
     public int available() throws IOException {
-        try {
-            return responseStream.available();
-        } catch (IOException e) {
+        if (closed) {
             return 0;
         }
+        return delegateStream.available();
     }
 
-    @Override
-    public boolean markSupported() {
-        return responseStream.markSupported();
-    }
-
-    @Override
-    public synchronized void mark(int readlimit) {
-        responseStream.mark(readlimit);
-    }
-
-    @Override
-    public synchronized void reset() throws IOException {
-        responseStream.reset();
-    }
-
+    /**
+     * Drains unread content when needed, then closes the delegate and the S3 object.
+     * <p>
+     * A second call returns immediately. Drain stops after {@link #MAX_DRAIN_BYTES}.
+     * Failures while draining or closing are logged and do not propagate, except that
+     * the method still declares {@link IOException} because it overrides {@link InputStream#close()}.
+     *
+     * @throws IOException declared by {@link InputStream#close()}; close failures are logged and swallowed
+     */
     @Override
     public void close() throws IOException {
-        if (fullyClosed) return;
-        fullyClosed = true;
+        if (closed) {
+            return;
+        }
+        closed = true;
 
         try {
-            if (isFullyRead()) {
-                // Stream fully consumed — return connection to pool cleanly
-                LOGGER.debug("SafeS3InputStream - fully consumed ({}/{} bytes), closing normally",
-                        bytesRead, contentLength);
-                responseStream.close();
-                return;
-            }
+            // Always attempt to drain — even if contentLength == -1 or bytesRead >= contentLength
+            // This is the most reliable way to suppress the warning
+            if (!isFullyRead() || contentLength <= 0) {  // also drain if length unknown
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "SafeS3InputStream - draining to prevent AWS warning. Known length: {}, bytesRead: {}",
+                        contentLength, bytesRead);
 
-            long remaining = contentLength >= 0 ? contentLength - bytesRead : Long.MAX_VALUE;
-
-            if (remaining > DRAIN_THRESHOLD_BYTES) {
-                // Large remainder — abort the HTTP connection rather than draining over the network.
-                // Under high load draining N×256KB+ per thread spikes latency and holds connections
-                // hostage. Aborting costs one pool slot but keeps response times stable.
-                LOGGER.debug("SafeS3InputStream - aborting: {}B remaining exceeds {}B drain threshold",
-                        remaining == Long.MAX_VALUE ? "unknown" : remaining, DRAIN_THRESHOLD_BYTES);
-                responseStream.abort();
-            } else {
-                // Small remainder — drain to return the HTTP connection to the pool cleanly
-                LOGGER.debug("SafeS3InputStream - draining ~{}B remainder to reuse connection", remaining);
                 byte[] buffer = new byte[DRAIN_BUFFER_SIZE];
                 long drained = 0;
-                int n;
-                while ((n = responseStream.read(buffer)) != -1) {
-                    drained += n;
-                    bytesRead += n;
+                int readBytes;
+
+
+                while ((readBytes = delegateStream.read(buffer)) != -1) {
+                    drained += readBytes;
+                    bytesRead += readBytes;
+
+                    // Safety: prevent infinite loop or huge objects from hanging
                     if (drained > MAX_DRAIN_BYTES) {
-                        // Shouldn't happen since remaining <= DRAIN_THRESHOLD_BYTES, but guard anyway
-                        LOGGER.warn("SafeS3InputStream - drain exceeded safety limit — aborting");
-                        responseStream.abort();
-                        return;
+                        LOGGER.warn(SESSIONID, REGISTRATIONID,
+                                "Drain exceeded safety limit of {} bytes - aborting drain", MAX_DRAIN_BYTES);
+                        break;
                     }
                 }
-                responseStream.close();
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "Drained {} additional bytes. Total read now: {}", drained, bytesRead);
+            } else {
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "Stream fully consumed ({}/{} bytes) - no drain needed", bytesRead, contentLength);
             }
+
+            delegateStream.close();
         } catch (IOException e) {
-            LOGGER.warn("SafeS3InputStream - exception during close, attempting abort", e);
+            LOGGER.warn(SESSIONID, REGISTRATIONID,
+                    "Exception during drain/close of delegate stream", e);
+        } finally {
             try {
-                responseStream.abort();
-            } catch (Exception ignored) {}
+                s3Object.close();
+                LOGGER.debug(SESSIONID, REGISTRATIONID, "S3Object closed");
+            } catch (IOException e) {
+                LOGGER.error(SESSIONID, REGISTRATIONID, "Failed to close S3Object", e);
+            }
         }
     }
 
+    /**
+     * Reports whether the delegate supports {@link #mark(int)} and {@link #reset()}.
+     *
+     * @return {@code true} when the delegate supports mark and reset
+     */
+    @Override
+    public boolean markSupported() {
+        return delegateStream.markSupported();
+    }
+
+    /**
+     * Marks the current position on the delegate.
+     *
+     * @param readlimit maximum number of bytes that can be read before the mark is invalidated
+     */
+    @Override
+    public synchronized void mark(int readlimit) {
+        delegateStream.mark(readlimit);
+    }
+
+    /**
+     * Repositions this stream to the last mark on the delegate.
+     *
+     * @throws IOException when the delegate cannot reset
+     */
+    @Override
+    public synchronized void reset() throws IOException {
+        delegateStream.reset();
+    }
+
+    /**
+     * Returns how many bytes have been read or drained.
+     *
+     * @return bytes consumed so far
+     */
     public long getBytesRead() {
         return bytesRead;
     }
 
+    /**
+     * Returns the content length captured at construction.
+     *
+     * @return content length, or {@code -1} when it was unknown
+     */
     public long getContentLength() {
         return contentLength;
     }
 
     /**
-     * Returns true only when contentLength is known and all bytes have been read.
-     * When contentLength is -1 (unknown), conservatively returns false so close()
-     * always attempts a drain or abort.
+     * Reports whether every byte of a known content length has been read.
+     *
+     * @return {@code true} when {@link #contentLength} is positive and {@link #bytesRead} has reached it
      */
     public boolean isFullyRead() {
-        return contentLength >= 0 && bytesRead >= contentLength;
-    }
-
-    public boolean isClosed() {
-        return fullyClosed;
+        return contentLength > 0 && bytesRead >= contentLength;
     }
 }

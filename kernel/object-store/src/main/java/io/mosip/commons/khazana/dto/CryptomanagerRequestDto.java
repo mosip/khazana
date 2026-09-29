@@ -11,24 +11,34 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDateTime;
 
+/**
+ * Request body sent to cryptomanager by {@link io.mosip.commons.khazana.util.OnlineCryptoUtil}.
+ * <p>
+ * {@code applicationId} is {@code REGISTRATION}. {@code data}, {@code salt}, and {@code aad}
+ * are Base64. The timestamp uses UTC pattern {@code yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}.
+ * Offline encryption uses the kernel cryptomanager DTO instead of this type.
+ * <p>
+ * Lombok generates a no-args constructor, an all-args constructor, accessors, and
+ * {@code equals}, {@code hashCode}, and {@code toString}.
+ */
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 
 public class CryptomanagerRequestDto {
 	/**
-	 * Application id of decrypting module
+	 * Application id of the module requesting encrypt or decrypt.
 	 */
 	
 	@NotBlank(message = "should not be null or empty")
 	private String applicationId;
 	/**
-	 * Refrence Id
+	 * Reference id of the key used to encrypt or decrypt.
 	 */
 	
 	private String referenceId;
 	/**
-	 * Timestamp
+	 * UTC timestamp of the request, serialized as {@code yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}.
 	 */
 
 	@JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
@@ -55,5 +65,10 @@ public class CryptomanagerRequestDto {
 	@NotBlank(message = "should not be null or empty")
 	private String aad;
 
+	/**
+	 * When {@code true}, cryptomanager prepends the certificate thumbprint to the result.
+	 * {@link io.mosip.commons.khazana.util.OnlineCryptoUtil} sets this from
+	 * {@code crypto.PrependThumbprint.enable} (default {@code true}).
+	 */
 	private Boolean prependThumbprint;
 }
