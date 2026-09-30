@@ -64,12 +64,6 @@
 		</sonar.coverage.exclusions>
 		<sonar.cpd.exclusions>**/dto/**,**/entity/**,**/config/**</sonar.cpd.exclusions>
 
-		<!-- ── MOSIP (external — no kernel-bom) ─────────────────────────────── -->
-		<!-- commons kernel-core must be installed locally (or resolved from snapshots). -->
-		<kernel.core.version>1.4.1-SNAPSHOT</kernel.core.version>
-		<!-- No 1.4.1-SNAPSHOT published for keymanager; rc.1 is the latest local/Central artifact. -->
-		<kernel.keymanager.service.version>1.4.1-rc.1</kernel.keymanager.service.version>
-
 		<!-- ── Third-party (latest GA on Maven Central, 2026-09-29) ─────────── -->
 		<!-- AWS SDK for Java 1.x: S3Adapter and SafeS3InputStream still call com.amazonaws.*. -->
 		<aws.sdk.v1.version>1.12.797</aws.sdk.v1.version>
@@ -83,6 +77,13 @@
 		<commons.lang3.version>3.20.0</commons.lang3.version>
 		<!-- Source: https://central.sonatype.com/artifact/org.json/json -->
 		<org.json.version>20260814</org.json.version>
+
+		<!-- ── MOSIP (external — no kernel-bom) ─────────────────────────────── -->
+		<!-- commons kernel-core must be installed locally (or resolved from snapshots). -->
+		<kernel.core.version>1.4.1-SNAPSHOT</kernel.core.version>
+		<!-- No 1.4.1-SNAPSHOT published for keymanager; rc.1 is the latest local/Central artifact. -->
+		<kernel.keymanager.service.version>1.4.1-rc.1</kernel.keymanager.service.version>
+
 	</properties>
 
 	<dependencyManagement>
