@@ -15,9 +15,10 @@ import io.mosip.commons.khazana.dto.ObjectStoreReference;
  * or {@code SwiftAdapter} (OpenStack Swift, not tested). Paths are account,
  * container, source, process, and object name. Null or empty source and process
  * segments are skipped when a key is built.
- * {@link #moveObject} defaults to {@code false}. {@link #listObjectsByPrefix}
- * defaults to an empty list and never returns {@code null}. Storage failures
- * from {@code S3Adapter} are thrown as
+ * {@link #moveObject} and {@link #listObjectsByPrefix} are implemented by
+ * {@code S3Adapter}. The SPI defaults return {@code false} and an empty list.
+ * {@code PosixAdapter} and {@code SwiftAdapter} keep those defaults. Storage
+ * failures from {@code S3Adapter} are thrown as
  * {@link io.mosip.commons.khazana.exception.ObjectStoreAdapterException}.
  * An empty list is not a failure.
  */
@@ -278,8 +279,9 @@ public interface ObjectStoreAdapter {
 	 * {@code dst}. If {@code deleteSourceAfterCopy} is {@code true}, the source
 	 * object is deleted after a successful copy, effectively performing a move.
 	 * <p>
-	 * The default implementation returns {@code false}. {@code S3Adapter},
-	 * {@code PosixAdapter}, and {@code SwiftAdapter} do not override this method.
+	 * {@code S3Adapter} copies then optionally deletes and throws on a missing
+	 * source. The default returns {@code false}. {@code PosixAdapter} and
+	 * {@code SwiftAdapter} keep the default.
 	 *
 	 * @param src                  reference to the source object
 	 * @param dst                  reference to the destination object
@@ -319,9 +321,9 @@ public interface ObjectStoreAdapter {
 	 * or the underlying storage exception when the list operation fails (e.g. bucket
 	 * inaccessible, permission denied). An empty list does not indicate failure.
 	 *
-	 * <p><b>Adapter support:</b> The default implementation returns an empty list.
-	 * {@code S3Adapter}, {@code PosixAdapter}, and {@code SwiftAdapter} do not override
-	 * this method today. The format notes above are the contract for an S3 override.
+	 * <p><b>Adapter support:</b> Fully implemented by {@code S3Adapter}. The default
+	 * implementation returns an empty list; {@code PosixAdapter} and {@code SwiftAdapter}
+	 * do not override this method.
 	 *
 	 * @param account   object-store account name; used as the S3 bucket when
 	 *                  {@code use.account.as.bucketname=true}

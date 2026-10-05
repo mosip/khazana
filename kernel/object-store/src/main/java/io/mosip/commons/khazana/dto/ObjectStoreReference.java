@@ -9,8 +9,8 @@ import lombok.NoArgsConstructor;
  * {@link io.mosip.commons.khazana.spi.ObjectStoreAdapter#moveObject}.
  * <p>
  * The five fields match the path arguments on the other adapter methods.
- * The default {@code moveObject} returns {@code false}; keys from
- * {@code listObjectsByPrefix} are intended to be placed in {@link #objectName}.
+ * {@code S3Adapter.moveObject} uses these fields as the copy source and destination.
+ * Keys from {@code listObjectsByPrefix} are intended to be placed in {@link #objectName}.
  * <p>
  * Lombok generates a no-args constructor, an all-args constructor, accessors, and
  * {@code equals}, {@code hashCode}, and {@code toString}.

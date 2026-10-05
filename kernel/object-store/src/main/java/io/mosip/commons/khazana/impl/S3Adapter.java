@@ -31,6 +31,8 @@ import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.AmazonS3Exception;
+import com.amazonaws.services.s3.model.ListObjectsV2Request;
+import com.amazonaws.services.s3.model.ListObjectsV2Result;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.S3Object;
@@ -38,6 +40,7 @@ import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import io.mosip.commons.khazana.config.LoggerConfiguration;
 import io.mosip.commons.khazana.dto.ObjectDto;
+import io.mosip.commons.khazana.dto.ObjectStoreReference;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import io.mosip.commons.khazana.util.ObjectStoreUtil;
@@ -60,7 +63,8 @@ import io.mosip.kernel.core.logger.spi.Logger;
  * Tags are objects under {@code Tags/}, not native S3 object tags.
  * {@code removeContainer} and {@code pack} return {@code false}.
  * {@code getObject} returns a {@link io.mosip.commons.khazana.util.SafeS3InputStream}.
- * {@code moveObject} and {@code listObjectsByPrefix} use the SPI defaults.
+ * {@link #moveObject} copies then optionally deletes. {@link #listObjectsByPrefix}
+ * returns container-relative keys under the prefix (paginated {@code ListObjectsV2}).
  *
  * Key improvements:
  * - Proper try-with-resources for stream management
@@ -649,6 +653,63 @@ public class S3Adapter implements ObjectStoreAdapter {
     }
 
     /**
+     * Copies {@code src} to {@code dst} with a server-side S3 copy. When
+     * {@code deleteSourceAfterCopy} is {@code true}, the source key is deleted after
+     * a successful copy (a move). A missing source throws rather than returning
+     * {@code false}, so callers can tell a failed copy from a no-op.
+     *
+     * @param src                   source location; {@code source} and {@code process}
+     *                              may be null when {@code objectName} is already a full key
+     * @param dst                   destination location, same key rules as {@code src}
+     * @param deleteSourceAfterCopy {@code true} to delete the source after copy
+     * @return {@code true} when the copy (and optional delete) succeed
+     * @throws ObjectStoreAdapterException when S3 cannot copy or delete; a missing
+     *         source is wrapped with {@link AmazonS3Exception} as the cause (HTTP 404)
+     */
+    @Override
+    public boolean moveObject(ObjectStoreReference src, ObjectStoreReference dst,
+            boolean deleteSourceAfterCopy) {
+        String srcBucketName = "";
+        String srcObjectName = "";
+        String dstBucketName = "";
+        String dstObjectName = "";
+        try {
+            srcBucketName = resolveBucket(src);
+            srcObjectName = resolveKey(src);
+            dstBucketName = resolveBucket(dst);
+            dstObjectName = resolveKey(dst);
+
+            long startTime = System.currentTimeMillis();
+            getConnection(srcBucketName).copyObject(srcBucketName, srcObjectName, dstBucketName, dstObjectName);
+            LOGGER.debug(SESSIONID, REGISTRATIONID,
+                    "moveObject copyObject timeTaken: " + (System.currentTimeMillis() - startTime)
+                            + " ms srcBucket: " + srcBucketName + " srcKey: " + srcObjectName
+                            + " dstBucket: " + dstBucketName + " dstKey: " + dstObjectName);
+            if (deleteSourceAfterCopy) {
+                getConnection(srcBucketName).deleteObject(srcBucketName, srcObjectName);
+                LOGGER.debug(SESSIONID, REGISTRATIONID,
+                        "moveObject deleteObject source timeTaken: " + (System.currentTimeMillis() - startTime)
+                                + " ms srcBucket: " + srcBucketName + " srcKey: " + srcObjectName);
+            }
+            return true;
+        } catch (AmazonS3Exception e) {
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "S3 error in moveObject from: " + srcObjectName + " to: " + dstObjectName
+                            + " | status: " + e.getStatusCode(),
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        } catch (Exception e) {
+            connection = null;
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Unexpected error in moveObject from: " + srcObjectName + " to: " + dstObjectName,
+                    ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
+    }
+
+    /**
      * Not supported. Logs and returns {@code false} without deleting a bucket.
      *
      * @param account   object-store account
@@ -818,6 +879,54 @@ public class S3Adapter implements ObjectStoreAdapter {
         long endTime = System.currentTimeMillis();
         LOGGER.info(SESSIONID, REGISTRATIONID, "getAllObjects - method completed in " + (endTime - startTime) + "ms, no objects found for account: " + account);
         return null;
+    }
+
+    /**
+     * Lists object keys under {@code prefix}. Returned keys are bucket-root keys when
+     * the container is the bucket, and container-relative (the {@code container/}
+     * segment stripped) when the account is the bucket, so they can be passed as
+     * {@code objectName} on {@link ObjectStoreReference} to {@link #moveObject}.
+     * An empty match returns an empty list, never {@code null}.
+     *
+     * @param account   object-store account; bucket when account-as-bucket mode is on
+     * @param container bucket when account-as-bucket mode is off, otherwise the first key segment
+     * @param prefix    prefix inside the container (for example {@code _draft/ridHash/Biometrics/})
+     * @return matching keys; never {@code null}
+     * @throws ObjectStoreAdapterException when the list call fails
+     */
+    @Override
+    public List<String> listObjectsByPrefix(String account, String container, String prefix) {
+        String bucketName = useAccountAsBucketname
+                ? addBucketPrefix(account).toLowerCase()
+                : addBucketPrefix(container).toLowerCase();
+        String objectPrefix = useAccountAsBucketname ? ObjectStoreUtil.getName(container, prefix) : prefix;
+        List<String> keys = new ArrayList<>();
+        try {
+            ListObjectsV2Request request = new ListObjectsV2Request()
+                    .withBucketName(bucketName)
+                    .withPrefix(objectPrefix);
+            ListObjectsV2Result result;
+            do {
+                result = getConnection(bucketName).listObjectsV2(request);
+                if (result.getObjectSummaries() != null) {
+                    for (S3ObjectSummary summary : result.getObjectSummaries()) {
+                        String key = summary.getKey();
+                        if (useAccountAsBucketname && key.startsWith(container + SEPARATOR)) {
+                            key = key.substring(container.length() + 1);
+                        }
+                        keys.add(key);
+                    }
+                }
+                request.setContinuationToken(result.getNextContinuationToken());
+            } while (result.isTruncated());
+        } catch (Exception e) {
+            connection = null;
+            LOGGER.error(SESSIONID, REGISTRATIONID,
+                    "Exception in listObjectsByPrefix for prefix: " + prefix, ExceptionUtils.getStackTrace(e));
+            throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                    OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
+        }
+        return keys;
     }
 
     /**
@@ -1080,6 +1189,32 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "doesBucketExists - method completed in " + (endTime - startTime) + "ms, bucketExists: " + result + " for bucketName: " + bucketName);
             return result;
         }
+    }
+
+    /**
+     * Bucket for an {@link ObjectStoreReference}: the account when account-as-bucket
+     * mode is on, otherwise the container. Prefix and lower-case are applied.
+     *
+     * @param ref object location
+     * @return normalized bucket name
+     */
+    private String resolveBucket(ObjectStoreReference ref) {
+        String bucketName = useAccountAsBucketname ? ref.getAccount() : ref.getContainer();
+        return addBucketPrefix(bucketName).toLowerCase();
+    }
+
+    /**
+     * Object key for an {@link ObjectStoreReference}. Null source and process are
+     * skipped so a full key in {@code objectName} (for example a draft path) is used as-is.
+     *
+     * @param ref object location
+     * @return S3 object key
+     */
+    private String resolveKey(ObjectStoreReference ref) {
+        if (useAccountAsBucketname) {
+            return ObjectStoreUtil.getName(ref.getContainer(), ref.getSource(), ref.getProcess(), ref.getObjectName());
+        }
+        return ObjectStoreUtil.getName(ref.getSource(), ref.getProcess(), ref.getObjectName());
     }
 
     /**

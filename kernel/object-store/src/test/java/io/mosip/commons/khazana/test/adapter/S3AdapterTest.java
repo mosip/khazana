@@ -2,6 +2,9 @@ package io.mosip.commons.khazana.test.adapter;
 
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.AmazonS3Exception;
+import com.amazonaws.services.s3.model.CopyObjectResult;
+import com.amazonaws.services.s3.model.ListObjectsV2Request;
+import com.amazonaws.services.s3.model.ListObjectsV2Result;
 import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
@@ -9,12 +12,13 @@ import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectInputStream;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 import io.mosip.commons.khazana.dto.ObjectDto;
+import io.mosip.commons.khazana.dto.ObjectStoreReference;
 import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.impl.S3Adapter;
-import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import org.apache.http.client.methods.HttpGet;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.ByteArrayInputStream;
@@ -30,10 +34,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +47,11 @@ import static org.mockito.Mockito.when;
  * Covers {@link S3Adapter} against a mocked AWS SDK 1.x {@link AmazonS3} client.
  */
 public class S3AdapterTest {
+
+    private static final String ACCOUNT = "testaccount";
+    private static final String CONTAINER = "testbucket";
+    private static final String SRC_KEY = "_draft/abc123/Biometrics/bio.cbeff";
+    private static final String DEST_KEY = "uinHash/Biometrics/bio.cbeff";
 
     private S3Adapter adapter;
     private AmazonS3 s3;
@@ -183,12 +194,162 @@ public class S3AdapterTest {
     }
 
     @Test
-    public void unsupportedAndDefaults() {
+    public void removeContainerAndPack_returnFalse() {
         assertFalse(adapter.removeContainer("a", "b", "s", "p"));
         assertFalse(adapter.pack("a", "b", "s", "p", "ref"));
-        ObjectStoreAdapter spi = adapter;
-        assertFalse(spi.moveObject(null, null, false));
-        assertTrue(spi.listObjectsByPrefix("a", "b", "p").isEmpty());
+    }
+
+    @Test
+    public void moveObject_copiesAndDoesNotDeleteWhenFlagFalse() {
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new CopyObjectResult());
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+
+        assertTrue(adapter.moveObject(src, dst, false));
+        verify(s3).copyObject(CONTAINER, SRC_KEY, CONTAINER, DEST_KEY);
+        verify(s3, never()).deleteObject(anyString(), anyString());
+    }
+
+    @Test
+    public void moveObject_deletesSourceWhenFlagTrue() {
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new CopyObjectResult());
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+
+        assertTrue(adapter.moveObject(src, dst, true));
+        verify(s3).copyObject(CONTAINER, SRC_KEY, CONTAINER, DEST_KEY);
+        verify(s3).deleteObject(CONTAINER, SRC_KEY);
+    }
+
+    @Test
+    public void moveObject_accountAsBucketPrefixesContainerOnKey() {
+        ReflectionTestUtils.setField(adapter, "useAccountAsBucketname", true);
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new CopyObjectResult());
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+
+        assertTrue(adapter.moveObject(src, dst, false));
+        verify(s3).copyObject(ACCOUNT, CONTAINER + "/" + SRC_KEY, ACCOUNT, CONTAINER + "/" + DEST_KEY);
+    }
+
+    @Test
+    public void moveObject_wrapsAmazonS3Exception() {
+        AmazonS3Exception missing = new AmazonS3Exception("no");
+        missing.setStatusCode(404);
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString())).thenThrow(missing);
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+        try {
+            adapter.moveObject(src, dst, false);
+        } catch (ObjectStoreAdapterException expected) {
+            assertSame(missing, expected.getCause());
+        }
+    }
+
+    @Test
+    public void moveObject_wrapsUnexpectedException() {
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("connection reset"));
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+        try {
+            adapter.moveObject(src, dst, false);
+        } catch (ObjectStoreAdapterException expected) {
+            assertNotNull(expected.getCause());
+        }
+    }
+
+    @Test
+    public void listObjectsByPrefix_returnsMatchingKeys() {
+        String prefix = "_draft/abc123/Biometrics/";
+        ListObjectsV2Result page = mock(ListObjectsV2Result.class);
+        when(page.getObjectSummaries()).thenReturn(List.of(
+                summary(prefix + "bio1.cbeff"),
+                summary(prefix + "bio2.cbeff")));
+        when(page.isTruncated()).thenReturn(false);
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page);
+
+        List<String> result = adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, prefix);
+        assertEquals(2, result.size());
+        assertTrue(result.contains(prefix + "bio1.cbeff"));
+        assertTrue(result.contains(prefix + "bio2.cbeff"));
+
+        ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
+        verify(s3).listObjectsV2(captor.capture());
+        assertEquals(CONTAINER, captor.getValue().getBucketName());
+        assertEquals(prefix, captor.getValue().getPrefix());
+    }
+
+    @Test
+    public void listObjectsByPrefix_emptyWhenNoMatch() {
+        ListObjectsV2Result page = mock(ListObjectsV2Result.class);
+        when(page.getObjectSummaries()).thenReturn(List.of());
+        when(page.isTruncated()).thenReturn(false);
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page);
+        assertTrue(adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, "_draft/missing/").isEmpty());
+    }
+
+    @Test
+    public void listObjectsByPrefix_stripsContainerWhenAccountIsBucket() {
+        ReflectionTestUtils.setField(adapter, "useAccountAsBucketname", true);
+        String prefix = "_draft/abc123/Biometrics/";
+        ListObjectsV2Result page = mock(ListObjectsV2Result.class);
+        when(page.getObjectSummaries()).thenReturn(List.of(
+                summary(CONTAINER + "/" + prefix + "face.cbeff")));
+        when(page.isTruncated()).thenReturn(false);
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page);
+
+        List<String> result = adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, prefix);
+        assertEquals(List.of(prefix + "face.cbeff"), result);
+
+        ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
+        verify(s3).listObjectsV2(captor.capture());
+        assertEquals(ACCOUNT, captor.getValue().getBucketName());
+        assertEquals(CONTAINER + "/" + prefix, captor.getValue().getPrefix());
+    }
+
+    @Test
+    public void listThenMove_accountAsBucketUsesStrippedKey() {
+        ReflectionTestUtils.setField(adapter, "useAccountAsBucketname", true);
+        when(s3.copyObject(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new CopyObjectResult());
+        ObjectStoreReference src = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, SRC_KEY);
+        ObjectStoreReference dst = new ObjectStoreReference(ACCOUNT, CONTAINER, null, null, DEST_KEY);
+        assertTrue(adapter.moveObject(src, dst, false));
+        verify(s3).copyObject(ACCOUNT, CONTAINER + "/" + SRC_KEY, ACCOUNT, CONTAINER + "/" + DEST_KEY);
+    }
+
+    @Test
+    public void listObjectsByPrefix_collectsPages() {
+        String prefix = "_draft/abc123/Biometrics/";
+        ListObjectsV2Result page1 = mock(ListObjectsV2Result.class);
+        when(page1.getObjectSummaries()).thenReturn(List.of(summary(prefix + "bio1.cbeff")));
+        when(page1.isTruncated()).thenReturn(true);
+        when(page1.getNextContinuationToken()).thenReturn("tok");
+        ListObjectsV2Result page2 = mock(ListObjectsV2Result.class);
+        when(page2.getObjectSummaries()).thenReturn(List.of(summary(prefix + "bio2.cbeff")));
+        when(page2.isTruncated()).thenReturn(false);
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page1, page2);
+
+        List<String> result = adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, prefix);
+        assertEquals(2, result.size());
+        assertTrue(result.contains(prefix + "bio1.cbeff"));
+        assertTrue(result.contains(prefix + "bio2.cbeff"));
+    }
+
+    @Test
+    public void listObjectsByPrefix_wrapsFailure() {
+        AmazonS3Exception denied = new AmazonS3Exception("denied");
+        denied.setStatusCode(500);
+        when(s3.listObjectsV2(any(ListObjectsV2Request.class))).thenThrow(denied);
+        try {
+            adapter.listObjectsByPrefix(ACCOUNT, CONTAINER, "_draft/");
+        } catch (ObjectStoreAdapterException expected) {
+            assertSame(denied, expected.getCause());
+        }
     }
 
     @Test

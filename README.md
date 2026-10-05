@@ -11,7 +11,7 @@ Parent Maven coordinates: `io.mosip.commons:khazana-parent` (`1.4.1-SNAPSHOT`). 
 ## Features
 
 - **`ObjectStoreAdapter` SPI** — get, put, exists, delete, metadata, tags, pack, and list
-- **`S3Adapter`** — Amazon S3 / MinIO via AWS SDK for Java 1.x (`com.amazonaws`). Singleton client, reconnect after failure, bucket names lowercased, tags stored as objects under `Tags/`
+- **`S3Adapter`** — Amazon S3 / MinIO via AWS SDK for Java 1.x (`com.amazonaws`). Singleton client, reconnect after failure, bucket names lowercased, tags stored as objects under `Tags/`. Implements `listObjectsByPrefix` and `moveObject` for draft publish/discard.
 - **`PosixAdapter`** — one zip per container under `{object.store.base.location}/{account}/{container}.zip`. `pack()` encrypts that zip
 - **`SwiftAdapter`** — OpenStack Swift via JOSS. Marked in source as not fully tested
 - **Path helper** — `ObjectStoreUtil.getName` joins non-empty `source` / `process` / `objectName` segments with `/`

@@ -26,7 +26,7 @@ khazana
 
 Methods: `getObject`, `putObject`, `exists`, `deleteObject`, `addObjectMetaData`, `getMetaData`, `incMetadata`, `decMetadata`, `removeContainer`, `pack`, `getAllObjects`, `addTags`, `getTags`, `deleteTags`, `moveObject`, `listObjectsByPrefix`.
 
-`moveObject` defaults to false. `listObjectsByPrefix` defaults to an empty list (never null). Bundled adapters use those defaults. An empty list is not a failure; storage errors throw `ObjectStoreAdapterException`.
+`moveObject` defaults to false. `listObjectsByPrefix` defaults to an empty list (never null). `S3Adapter` implements both. `PosixAdapter` and `SwiftAdapter` keep the defaults. An empty list is not a failure; storage errors throw `ObjectStoreAdapterException`.
 
 `ObjectStoreUtil.getName` skips a null or empty segment and joins the rest with `/`.
 
@@ -42,6 +42,8 @@ Primary adapter. AWS SDK 1.x (`com.amazonaws`). One shared `AmazonS3` client. On
 - Lowercase every bucket name. Prepend `object.store.s3.bucket-name-prefix` when set.
 - `use.account.as.bucketname=false` (default): bucket is the container. `true`: bucket is the account and the key is `container/` + object name.
 - Tags are objects under `Tags/`, not native S3 object tags.
+- `listObjectsByPrefix` uses paginated `ListObjectsV2`. When the account is the bucket, returned keys have the `container/` segment stripped.
+- `moveObject` copies then optionally deletes. A missing source throws `ObjectStoreAdapterException` wrapping `AmazonS3Exception` (HTTP 404).
 - `removeContainer` and `pack` return false.
 - Close S3 bodies through `SafeS3InputStream`.
 - `S3PoolStatsLogger` is AWS SDK 2.x `MetricPublisher` only.
