@@ -1,6 +1,7 @@
 package io.mosip.commons.khazana.test.adapter;
 
 import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.AmazonS3Exception;
 import com.amazonaws.services.s3.model.CopyObjectResult;
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
@@ -19,6 +20,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.ByteArrayInputStream;
@@ -29,6 +31,12 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -403,7 +411,7 @@ public class S3AdapterTest {
     @Test
     public void tags_accountBucketAndBackwardCompatibleRetry() {
         ReflectionTestUtils.setField(adapter, "useAccountAsBucketname", true);
-        ReflectionTestUtils.setField(adapter, "existingBuckets", new ArrayList<>(List.of("account")));
+        ((Set<String>) ReflectionTestUtils.getField(adapter, "existingBuckets")).add("account");
         AmazonS3Exception denied = new AmazonS3Exception("Access Denied");
         when(s3.putObject(anyString(), anyString(), any(InputStream.class), any(ObjectMetadata.class))).thenThrow(denied);
         when(s3.doesObjectExist(anyString(), anyString())).thenReturn(true, false);
@@ -418,7 +426,7 @@ public class S3AdapterTest {
     @Test
     public void accountAsBucket_coversMutationsAndFailures() {
         ReflectionTestUtils.setField(adapter, "useAccountAsBucketname", true);
-        ReflectionTestUtils.setField(adapter, "existingBuckets", new ArrayList<String>());
+
         when(s3.doesBucketExistV2(anyString())).thenReturn(false, true);
         when(s3.doesObjectExist(anyString(), anyString())).thenReturn(true);
         S3Object object = s3Object("z");
@@ -482,6 +490,106 @@ public class S3AdapterTest {
             adapter.exists("a", "b", "s", "p", "o");
         } catch (ObjectStoreAdapterException expected) {
             assertNotNull(expected.getMessage());
+        }
+    }
+
+    @Test
+    public void missingKeyDuringWriteKeepsClientAndPreservesCause() throws Exception {
+        AmazonS3Exception missing = new AmazonS3Exception("NoSuchKey");
+        missing.setStatusCode(404);
+        missing.setErrorCode("NoSuchKey");
+        CountDownLatch bucketCheckStarted = new CountDownLatch(1);
+        CountDownLatch readFinished = new CountDownLatch(1);
+        when(s3.doesBucketExistV2(anyString())).thenAnswer(invocation -> {
+            bucketCheckStarted.countDown();
+            assertTrue(readFinished.await(5, TimeUnit.SECONDS));
+            return true;
+        });
+        when(s3.getObject(anyString(), anyString())).thenThrow(missing);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> write = executor.submit(() -> adapter.putObject(
+                    "a", "b", "s", "p", "write", new ByteArrayInputStream(new byte[]{1})));
+            Future<?> read = executor.submit(() -> {
+                try {
+                    assertTrue(bucketCheckStarted.await(5, TimeUnit.SECONDS));
+                    ObjectStoreAdapterException error = org.junit.Assert.assertThrows(
+                            ObjectStoreAdapterException.class,
+                            () -> adapter.getObject("a", "b", "s", "p", "missing"));
+                    assertSame(missing, error.getCause());
+                } finally {
+                    readFinished.countDown();
+                }
+                return null;
+            });
+            read.get(10, TimeUnit.SECONDS);
+            assertTrue(write.get(10, TimeUnit.SECONDS));
+            assertSame(s3, ReflectionTestUtils.getField(adapter, "connection"));
+            verify(s3, never()).shutdown();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void shutdownClosesInitializedClient() {
+        adapter.shutdown();
+        verify(s3).shutdown();
+    }
+
+    @Test
+    public void initializationRetriesWithFreshClientAndClosesFailure() {
+        ReflectionTestUtils.setField(adapter, "connection", null);
+        ReflectionTestUtils.setField(adapter, "maxRetry", 2);
+        AmazonS3 first = mock(AmazonS3.class);
+        AmazonS3 second = mock(AmazonS3.class);
+        AmazonS3ClientBuilder builder = mock(AmazonS3ClientBuilder.class, org.mockito.Mockito.RETURNS_SELF);
+        when(builder.build()).thenReturn(first, second);
+        when(first.doesBucketExistV2("bucket")).thenThrow(new RuntimeException("unavailable"));
+        when(second.doesBucketExistV2("bucket")).thenReturn(false);
+        try (MockedStatic<AmazonS3ClientBuilder> builders = org.mockito.Mockito.mockStatic(AmazonS3ClientBuilder.class)) {
+            builders.when(AmazonS3ClientBuilder::standard).thenReturn(builder);
+            AmazonS3 result = ReflectionTestUtils.invokeMethod(adapter, "getConnection", "bucket");
+            assertSame(second, result);
+            assertSame(second, ReflectionTestUtils.getField(adapter, "connection"));
+            verify(first).shutdown();
+            verify(second, never()).shutdown();
+            verify(builder, org.mockito.Mockito.times(2)).build();
+        }
+    }
+
+    @Test
+    public void concurrentInitializationPublishesOnlyValidatedClient() throws Exception {
+        ReflectionTestUtils.setField(adapter, "connection", null);
+        AmazonS3 client = mock(AmazonS3.class);
+        AmazonS3ClientBuilder builder = mock(AmazonS3ClientBuilder.class, org.mockito.Mockito.RETURNS_SELF);
+        when(builder.build()).thenReturn(client);
+        CountDownLatch validationStarted = new CountDownLatch(1);
+        CountDownLatch finishValidation = new CountDownLatch(1);
+        when(client.doesBucketExistV2("bucket")).thenAnswer(invocation -> {
+            validationStarted.countDown();
+            assertTrue(finishValidation.await(5, TimeUnit.SECONDS));
+            return true;
+        });
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<AmazonS3> first = executor.submit(() -> {
+                try (MockedStatic<AmazonS3ClientBuilder> builders = org.mockito.Mockito.mockStatic(AmazonS3ClientBuilder.class)) {
+                    builders.when(AmazonS3ClientBuilder::standard).thenReturn(builder);
+                    return ReflectionTestUtils.invokeMethod(adapter, "getConnection", "bucket");
+                }
+            });
+            assertTrue(validationStarted.await(5, TimeUnit.SECONDS));
+            assertNull(ReflectionTestUtils.getField(adapter, "connection"));
+            Future<AmazonS3> second = executor.submit(
+                    () -> ReflectionTestUtils.invokeMethod(adapter, "getConnection", "bucket"));
+            finishValidation.countDown();
+            assertSame(client, first.get(10, TimeUnit.SECONDS));
+            assertSame(client, second.get(10, TimeUnit.SECONDS));
+            verify(builder).build();
+        } finally {
+            finishValidation.countDown();
+            executor.shutdownNow();
         }
     }
 
