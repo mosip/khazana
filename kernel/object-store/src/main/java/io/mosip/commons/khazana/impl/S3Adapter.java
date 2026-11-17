@@ -15,8 +15,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.mosip.commons.khazana.util.SafeS3InputStream;
+import jakarta.annotation.PreDestroy;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,8 +55,7 @@ import io.mosip.kernel.core.logger.spi.Logger;
  * <p>
  * Primary {@link io.mosip.commons.khazana.spi.ObjectStoreAdapter}, selected with
  * {@code @Qualifier("S3Adapter")}. One shared {@link com.amazonaws.services.s3.AmazonS3}
- * client is reused. A failed call sets that client to {@code null} so the next call
- * reconnects, up to {@code object.store.connection.max.retry} attempts.
+ * client is initialized once and reused until application shutdown.
  * Bucket names are lower-cased. {@code object.store.s3.bucket-name-prefix} is prepended
  * when the name does not already start with it.
  * When {@code object.store.s3.use.account.as.bucketname} is {@code false} (the default),
@@ -168,20 +170,9 @@ public class S3Adapter implements ObjectStoreAdapter {
     @Value("${object.store.s3.stream.buffer.size:8192}")
     private int streamBufferSize;
 
-    /**
-     * Retry counter held on the adapter. Connection attempts are counted inside {@link #getConnection(String)}.
-     */
-    private int retry = 0;
-
-    /**
-     * Bucket names already known to exist when {@link #useAccountAsBucketname} is {@code true}.
-     */
-    private List<String> existingBuckets = new ArrayList<>();
-
-    /**
-     * Shared S3 client. Cleared after a failed call so the next operation reconnects.
-     */
-    private AmazonS3 connection = null;
+    private final Set<String> existingBuckets = ConcurrentHashMap.newKeySet();
+    private volatile AmazonS3 connection;
+    private final Object connectionLock = new Object();
 
     /**
      * Separator between key segments and after the tags prefix.
@@ -241,7 +232,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                 return new SafeS3InputStream(s3Object, contentLength);
             }
         } catch (Exception e) {
-            connection = null;
             if (s3Object != null) {
                 try {
                     s3Object.close();
@@ -292,7 +282,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "exists - method completed in " + (endTime - startTime) + "ms, objectExists: " + result + " for objectName: " + objectName);
             return result;
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured in exists method for : " + container + " after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -331,7 +320,7 @@ public class S3Adapter implements ObjectStoreAdapter {
 
         try {
             AmazonS3 connection = getConnection(bucketName);
-            if (!doesBucketExists(bucketName)) {
+            if (!doesBucketExists(connection, bucketName)) {
                 LOGGER.info(SESSIONID, REGISTRATIONID, "putObject - creating bucket: " + bucketName);
                 connection.createBucket(bucketName);
                 if (useAccountAsBucketname)
@@ -346,7 +335,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                 return true;
             }
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured in putObject for : " + container + " after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -386,7 +374,8 @@ public class S3Adapter implements ObjectStoreAdapter {
             bucketName = addBucketPrefix(bucketName);
             bucketName = bucketName.toLowerCase();
 
-            s3Object = getConnection(bucketName).getObject(bucketName, finalObjectName);
+            AmazonS3 client = getConnection(bucketName);
+            s3Object = client.getObject(bucketName, finalObjectName);
             ObjectMetadata objectMetadata = new ObjectMetadata();
 
             if (s3Object.getObjectMetadata() != null && s3Object.getObjectMetadata().getUserMetadata() != null)
@@ -398,13 +387,12 @@ public class S3Adapter implements ObjectStoreAdapter {
             try (InputStream content = s3Object.getObjectContent()) {
                 PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, finalObjectName, content, objectMetadata);
                 putObjectRequest.getRequestClientOptions().setReadLimit(readlimit);
-                getConnection(bucketName).putObject(putObjectRequest);
+                client.putObject(putObjectRequest);
                 long endTime = System.currentTimeMillis();
                 LOGGER.info(SESSIONID, REGISTRATIONID, "addObjectMetaData - method completed successfully in " + (endTime - startTime) + "ms for objectName: " + objectName);
                 return metadata;
             }
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID,"Exception occured to addObjectMetaData for : " + container + " after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             metadata = null;
@@ -565,7 +553,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "incMetadata - metaDataKey not found after " + (endTime - startTime) + "ms for objectName: " + objectName);
             return null;
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured in incMetadata after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -604,7 +591,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "decMetadata - metaDataKey not found after " + (endTime - startTime) + "ms for objectName: " + objectName);
             return null;
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured in decMetadata after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -645,7 +631,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "deleteObject - method completed successfully in " + (endTime - startTime) + "ms for objectName: " + objectName);
             return true;
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured in deleteObject after " + (endTime - startTime) + "ms", ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(), OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
@@ -680,13 +665,14 @@ public class S3Adapter implements ObjectStoreAdapter {
             dstObjectName = resolveKey(dst);
 
             long startTime = System.currentTimeMillis();
-            getConnection(srcBucketName).copyObject(srcBucketName, srcObjectName, dstBucketName, dstObjectName);
+            AmazonS3 client = getConnection(srcBucketName);
+            client.copyObject(srcBucketName, srcObjectName, dstBucketName, dstObjectName);
             LOGGER.debug(SESSIONID, REGISTRATIONID,
                     "moveObject copyObject timeTaken: " + (System.currentTimeMillis() - startTime)
                             + " ms srcBucket: " + srcBucketName + " srcKey: " + srcObjectName
                             + " dstBucket: " + dstBucketName + " dstKey: " + dstObjectName);
             if (deleteSourceAfterCopy) {
-                getConnection(srcBucketName).deleteObject(srcBucketName, srcObjectName);
+                client.deleteObject(srcBucketName, srcObjectName);
                 LOGGER.debug(SESSIONID, REGISTRATIONID,
                         "moveObject deleteObject source timeTaken: " + (System.currentTimeMillis() - startTime)
                                 + " ms srcBucket: " + srcBucketName + " srcKey: " + srcObjectName);
@@ -700,7 +686,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
         } catch (Exception e) {
-            connection = null;
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Unexpected error in moveObject from: " + srcObjectName + " to: " + dstObjectName,
                     ExceptionUtils.getStackTrace(e));
@@ -757,59 +742,85 @@ public class S3Adapter implements ObjectStoreAdapter {
      * @throws ObjectStoreAdapterException when every attempt fails or the retry loop exits unexpectedly
      */
     private AmazonS3 getConnection(String bucketName) {
-        if (connection != null) {
-            LOGGER.info(SESSIONID, REGISTRATIONID, "Reusing existing S3 connection");
-            return connection;
+        AmazonS3 client = connection;
+        if (client == null) {
+            synchronized (connectionLock) {
+                client = connection;
+                if (client == null) {
+                    client = createAndValidateConnection(bucketName);
+                    connection = client;
+                }
+            }
         }
+        return client;
+    }
 
-        int attempt = 0;
-        while (attempt < maxRetry) {
-            attempt++;
+    private AmazonS3 createAndValidateConnection(String bucketName) {
+        for (int attempt = 1; attempt <= maxRetry; attempt++) {
+            AmazonS3 client = null;
             try {
-                AWSCredentials awsCredentials = new BasicAWSCredentials(accessKey, secretKey);
-                ClientConfiguration clientConfig = new ClientConfiguration()
+                AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
+                ClientConfiguration config = new ClientConfiguration()
                         .withConnectionTimeout(connectionTimeout)
                         .withSocketTimeout(socketTimeout)
                         .withClientExecutionTimeout(clientExecutionTimeout)
                         .withMaxConnections(maxConnection)
                         .withMaxErrorRetry(maxRetry);
 
-                connection = AmazonS3ClientBuilder.standard()
-                        .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
+                client = AmazonS3ClientBuilder.standard()
+                        .withCredentials(new AWSStaticCredentialsProvider(credentials))
                         .enablePathStyleAccess()
-                        .withClientConfiguration(clientConfig)
-                        .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(url, region))
+                        .withClientConfiguration(config)
+                        .withEndpointConfiguration(
+                                new AwsClientBuilder.EndpointConfiguration(url, region))
                         .build();
 
-                // Verify connection works
-                connection.doesBucketExistV2(bucketName);
+                // A false result means the bucket is absent; callers may create it.
+                client.doesBucketExistV2(bucketName);
+                return client;
+            } catch (Exception failure) {
+                if (client != null) {
+                    try {
+                        client.shutdown();
+                    } catch (Exception shutdownFailure) {
+                        failure.addSuppressed(shutdownFailure);
+                    }
+                }
 
-                LOGGER.info(SESSIONID, REGISTRATIONID,
-                        "New S3 connection created successfully after {} attempts", attempt);
-                return connection;
-
-            } catch (Exception e) {
                 LOGGER.warn(SESSIONID, REGISTRATIONID,
-                        "S3 connection attempt {} failed for bucket {}. Retrying...", attempt, bucketName, e);
+                        "S3 connection attempt {} failed for bucket {}", attempt, bucketName, failure);
 
-                if (attempt >= maxRetry) {
-                    LOGGER.error(SESSIONID, REGISTRATIONID,
-                            "Max retries ({}) reached. Giving up on S3 connection.", maxRetry);
+                if (attempt == maxRetry) {
                     throw new ObjectStoreAdapterException(
                             OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
-                            "Failed to create S3 connection after " + maxRetry + " attempts", e);
+                            "Failed to create S3 connection after " + maxRetry + " attempts",
+                            failure);
                 }
 
                 try {
-                    Thread.sleep(300 + attempt * 200); // simple exponential backoff ~300–~4s
-                } catch (InterruptedException ie) {
+                    Thread.sleep(300L + attempt * 200L);
+                } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
+                    throw new ObjectStoreAdapterException(
+                            OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+                            "Interrupted while creating S3 connection",
+                            interrupted);
                 }
             }
         }
 
-        throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
+        throw new ObjectStoreAdapterException(
+                OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
                 "Unexpected exit from connection retry loop");
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        synchronized (connectionLock) {
+            if (connection != null) {
+                connection.shutdown();
+            }
+        }
     }
 
     /**
@@ -905,9 +916,10 @@ public class S3Adapter implements ObjectStoreAdapter {
             ListObjectsV2Request request = new ListObjectsV2Request()
                     .withBucketName(bucketName)
                     .withPrefix(objectPrefix);
+            AmazonS3 client = getConnection(bucketName);
             ListObjectsV2Result result;
             do {
-                result = getConnection(bucketName).listObjectsV2(request);
+                result = client.listObjectsV2(request);
                 if (result.getObjectSummaries() != null) {
                     for (S3ObjectSummary summary : result.getObjectSummaries()) {
                         String key = summary.getKey();
@@ -920,7 +932,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                 request.setContinuationToken(result.getNextContinuationToken());
             } while (result.isTruncated());
         } catch (Exception e) {
-            connection = null;
             LOGGER.error(SESSIONID, REGISTRATIONID,
                     "Exception in listObjectsByPrefix for prefix: " + prefix, ExceptionUtils.getStackTrace(e));
             throw new ObjectStoreAdapterException(OBJECT_STORE_NOT_ACCESSIBLE.getErrorCode(),
@@ -971,7 +982,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             bucketName = addBucketPrefix(bucketName);
             bucketName = bucketName.toLowerCase();
             AmazonS3 connection = getConnection(bucketName);
-            if (!doesBucketExists(bucketName)) {
+            if (!doesBucketExists(connection, bucketName)) {
                 LOGGER.info(SESSIONID, REGISTRATIONID, "addTags - creating bucket: " + bucketName);
                 connection.createBucket(bucketName);
                 if (useAccountAsBucketname)
@@ -996,7 +1007,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                             LOGGER.info(SESSIONID, REGISTRATIONID, "addTags - deleted existing object and retrying");
                             addTags(account, container, tags);
                         } else {
-                            connection = null;
                             long endTime = System.currentTimeMillis();
                             LOGGER.error(SESSIONID, REGISTRATIONID,
                                     "Exception occured while addTags for : " + container + " after " + (endTime - startTime) + "ms",
@@ -1005,7 +1015,6 @@ public class S3Adapter implements ObjectStoreAdapter {
                                     OBJECT_STORE_NOT_ACCESSIBLE.getErrorMessage(), e);
                         }
                     }else {
-                        connection = null;
                         long endTime = System.currentTimeMillis();
                         LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container + " after " + (endTime - startTime) + "ms",
                                 ExceptionUtils.getStackTrace(e));
@@ -1018,7 +1027,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "addTags - method completed successfully in " + (endTime - startTime) + "ms for container: " + container);
 
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occured while addTags for : " + container + " after " + (endTime - startTime) + "ms",
                     ExceptionUtils.getStackTrace(e));
@@ -1129,7 +1137,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             bucketName = addBucketPrefix(bucketName);
             bucketName = bucketName.toLowerCase();
             AmazonS3 connection = getConnection(bucketName);
-            if (!doesBucketExists(bucketName)) {
+            if (!doesBucketExists(connection, bucketName)) {
                 LOGGER.info(SESSIONID, REGISTRATIONID, "deleteTags - creating bucket: " + container);
                 connection.createBucket(bucketName);
                 if (useAccountAsBucketname)
@@ -1145,7 +1153,6 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "deleteTags - method completed successfully in " + (endTime - startTime) + "ms, deleted " + tags.size() + " tags for container: " + container);
 
         } catch (Exception e) {
-            connection = null;
             long endTime = System.currentTimeMillis();
             LOGGER.error(SESSIONID, REGISTRATIONID, "Exception occurred while deleteTags for : " + container + " after " + (endTime - startTime) + "ms",
                     ExceptionUtils.getStackTrace(e));
@@ -1163,7 +1170,7 @@ public class S3Adapter implements ObjectStoreAdapter {
      * @param bucketName lower-cased bucket name, including any prefix
      * @return {@code true} when the bucket exists
      */
-    private boolean doesBucketExists(String bucketName) {
+    private boolean doesBucketExists(AmazonS3 client, String bucketName) {
         long startTime = System.currentTimeMillis();
         LOGGER.info(SESSIONID, REGISTRATIONID, "doesBucketExists - method started for bucketName: " + bucketName);
 
@@ -1175,7 +1182,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             return result;
         }
         else if (useAccountAsBucketname && !existingBuckets.contains(bucketName)) {
-            boolean doesBucketExistsInObjectStore = connection.doesBucketExistV2(bucketName);
+            boolean doesBucketExistsInObjectStore = client.doesBucketExistV2(bucketName);
             if (doesBucketExistsInObjectStore) {
                 existingBuckets.add(bucketName);
                 result = true;
@@ -1184,7 +1191,7 @@ public class S3Adapter implements ObjectStoreAdapter {
             LOGGER.info(SESSIONID, REGISTRATIONID, "doesBucketExists - checked object store in " + (endTime - startTime) + "ms, bucketExists: " + result + " for bucketName: " + bucketName);
             return result;
         } else {
-            result = connection.doesBucketExistV2(bucketName);
+            result = client.doesBucketExistV2(bucketName);
             long endTime = System.currentTimeMillis();
             LOGGER.info(SESSIONID, REGISTRATIONID, "doesBucketExists - method completed in " + (endTime - startTime) + "ms, bucketExists: " + result + " for bucketName: " + bucketName);
             return result;
